@@ -10,7 +10,7 @@ It reconstructs **cell-state trajectories and dynamic gene programs** by modelin
 GTra directly leverages **longitudinal single-cell transcriptomic data** and infers trajectories by tracking how gene expression modules evolve and transition across adjacent time points.
 
 <p align="center">
-  <img src="GTra_overview.png" width="900">
+  <img src="./imgs/GTra_overview.png" width="900">
 </p>
 
 *Overview of the GTra framework.*
