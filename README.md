@@ -7,16 +7,10 @@ It reconstructs **cell-state trajectories and dynamic gene programs** by modelin
 
 ## Overview
 
-GTra is designed to characterize **coordinated gene expression programs that evolve over physical time** in time-series single-cell RNA-seq data.  
-While conventional trajectory inference methods primarily focus on ordering individual cells, GTra instead emphasizes how **groups of co-expressed genes are reused, reorganized, or replaced over time**, which is often difficult to capture using cell-centric or condition-based analyses.
+GTra directly leverages **longitudinal single-cell transcriptomic data** to infer trajectories of gene expression programs over physical time.
 
-To achieve this, GTra models trajectories by linking **gene clusters** rather than individual cells. At each time point, cell type–specific gene clusters are identified via graph-based co-expression analysis. Clusters from adjacent time points are then connected based on complementary measures of gene set overlap (Jaccard similarity) and directional consistency of expression changes (cosine similarity), resulting in a **directed inter-temporal network** that explicitly represents regulatory continuity over time.
+Instead of ordering individual cells along a pseudotime axis, GTra models how **co-expressed gene modules evolve and transition across adjacent time points**, enabling reconstruction of biologically meaningful trajectories without predefined lineage structures.
 
-Because such networks may admit multiple possible routes, GTra optionally supports **Answer path constraints**, which encode biologically feasible directions of regulatory progression. When provided, these constraints suppress implausible transitions such as spurious cycles or reversals of terminal states, while remaining optional for trajectory reconstruction.
-
-Along inferred trajectories, GTra further summarizes dynamic regulatory programs into higher-order **gene modules**, capturing heterogeneous temporal patterns such as activation, repression, or transient responses. To ensure robustness, both cluster detection and trajectory construction are embedded within a **bootstrap-based statistical validation framework**, retaining only highly reproducible transitions.
-
-Together, GTra reframes trajectory inference as the reconstruction and interpretation of **time-resolved gene regulatory programs**, providing a robust and interpretable framework for studying dynamic biological processes in development, perturbation, and disease.
 
 <p align="center">
   <img src="./imgs/GTra_overview.png" width="900">
