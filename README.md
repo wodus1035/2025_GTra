@@ -56,36 +56,55 @@ GTra expects a time-resolved single-cell expression matrix provided as an `AnnDa
 
 ---
 
-### Basic usage
+## Quick start
 
-```python
-import gtra
-import scanpy as sc
+GTra infers trajectories from time-series single-cell RNA-seq data by modeling transitions of gene expression modules across physical time.
 
-# Load time-series single-cell data
-adata = sc.read_h5ad("example_time_series.h5ad")
+Rather than ordering individual cells along a pseudotime axis, GTra reconstructs **directed trajectories of gene modules** by explicitly incorporating experimentally defined time points.
 
-# Initialize GTra object
-g = gtra.GTra(
-    adata,
-    time_key="time",
-    celltype_key="cell_type"
-)
+---
 
-# Run trajectory inference
-g.fit()
+### Input data
 
-# Retrieve inferred trajectories
-trajectories = g.get_trajectories()
+GTra expects time-resolved single-cell transcriptomic data provided as an `AnnData` object with the following required annotations:
 
-# Extract gene modules along trajectories
-modules = g.get_gene_modules()
+- **Expression matrix**  
+  `adata.X` — gene expression matrix (cells × genes)
 
-# Plot inferred trajectories
-g.plot_trajectory_graph()
+- **Physical time**  
+  `adata.obs["time"]` — discrete time points (e.g. 0, 3, 24, 72)
 
-# Plot gene module dynamics
-g.plot_gene_modules()
+- **Cell type labels**  
+  `adata.obs["cell_type"]` — cell types or cell populations
+
+- **Gene identifiers**  
+  `adata.var_names` — gene symbols
+
+---
+
+### Output
+
+GTra produces the following outputs:
+
+- **Trajectory graph**  
+  A directed network representing cell-state transitions across adjacent time points
+
+- **Gene modules**  
+  Trajectory-specific gene expression programs capturing coherent temporal dynamics
+
+- **Transition statistics**  
+  Statistically validated inter-temporal cluster transition scores
+
+---
+
+### Tutorials
+
+Step-by-step tutorials and reproducible examples are provided in the `tutorials/` directory:
+
+- Data preprocessing and input formatting  
+- Trajectory reconstruction and visualization  
+- Interpretation of gene modules and transition dynamics
+
 
 ---
 
