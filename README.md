@@ -44,25 +44,6 @@ Instead of ordering individual cells along a pseudotime axis, GTra models how **
 
 GTra infers trajectories from time-series single-cell RNA-seq data by modeling transitions of gene expression modules across physical time.
 
-### Input
-
-GTra expects a time-resolved single-cell expression matrix provided as an `AnnData` object, with the following annotations:
-
-- `adata.X`  
-  Gene expression matrix (cells × genes)
-- `adata.obs["time"]`  
-  Discrete physical time points (e.g. 0, 3, 24, 72)
-- `adata.obs["cell_type"]`  
-  Cell type or population labels
-- `adata.var_names`  
-  Gene symbols
-
----
-
-## Quick start
-
-GTra infers trajectories from time-series single-cell RNA-seq data by modeling transitions of gene expression modules across physical time.
-
 Rather than ordering individual cells along a pseudotime axis, GTra reconstructs **directed trajectories of gene modules** by explicitly incorporating experimentally defined time points.
 
 ---
