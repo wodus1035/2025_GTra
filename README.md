@@ -1,6 +1,5 @@
 # GTra  
-## Real-time trajectory inference from temporal single-cell expression  
-### via gene-module continuity and constrained transitions
+## Real-time trajectory inference from temporal single-cell expression via gene-module continuity and constrained transitions
 
 GTra is a time-resolved trajectory inference framework for time-series single-cell RNA-seq data.  
 It reconstructs **cell-state trajectories and dynamic gene programs** by modeling the continuity of co-expressed gene modules across physical time, without relying on pseudotime or predefined lineage structures.
