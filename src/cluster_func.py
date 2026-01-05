@@ -129,9 +129,6 @@ def knn_based_gene_clustering(tp_data_df, tp_data_obs, clabel):
     else:
         best_idx = np.where(res_range == kneedle.knee)[0][0]
 
-    # delta_mod = np.diff(mod)
-    # second_jump_idx = np.argsort(delta_mod)[::-1][1]
-    # best_part = par[second_jump_idx+1]
     best_part = par[best_idx]
     best_labels = best_part.membership
 
@@ -167,7 +164,7 @@ def build_boot_obj(dat):
     obj.params = dat['params']
     return obj
 
-# Selected randomized cells
+# Selected randomized cells (cell type-specific)
 def create_random_cells(obj, tp):
     trial_cells = list()
     dat = obj.tp_data_dict[tp]
@@ -291,14 +288,3 @@ def get_cc_clusters(obj):
             clabel_clusters.append(clustered_genes)
         
         obj.gene_label_info[time] = clabel_clusters
-    
-    
-
-
-
-
-
-
-
-        
-

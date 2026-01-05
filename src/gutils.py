@@ -151,6 +151,34 @@ def JS_threshold_test(obj, tp1, tp2):
 
     return optimal_th
 
+# Calculates KL divergence directional score
+def to_prob_dist(x, eps=1e-12):
+    """
+    Normalize a 1D vector into a probability distribution.
+    eps prevents log(0) errors or zero-division.
+    """
+    x = np.asarray(x, dtype=float)
+    x = np.maximum(x, eps)   # prevent zeros
+    return x / np.sum(x)
+
+def kl_divergence(P, Q, eps=1e-12):
+    """
+    Compute KL divergence KL(P || Q).
+    P, Q must already be normalized probability distributions.
+    """
+    P = np.maximum(P, eps)
+    Q = np.maximum(Q, eps)
+    return np.sum(P * np.log(P / Q))
+
+def kl_similarity(P, Q):
+    """
+    Convert KL divergence into similarity value (0~1).
+    Higher = more similar.
+    """
+    kl = kl_divergence(P, Q)
+    return np.exp(-kl)
+
+
 # Create normalized pseudo-bulk data
 def cal_cos_dist(obj,tp1,tp2,t1_s,t2_s,t1_df,t2_df,inter_genes):
     # Load cells
@@ -166,9 +194,14 @@ def cal_cos_dist(obj,tp1,tp2,t1_s,t2_s,t1_df,t2_df,inter_genes):
     expr_gene_idx = [i for i,val in enumerate(pseudo_concat.sum(axis=1)) if val]
     expr_genes = list(pseudo_concat.iloc[expr_gene_idx,:].index)
 
+    # Add code: 25-11-21 Normalize to probability distribution
+    # P = to_prob_dist(t1_pseudo)
+    # Q = to_prob_dist(t2_pseudo) 
+    # kl_sim = kl_similarity(P, Q)
+
     # Calculate cosine distance
     if len(expr_genes) == 0:
-        return -1
+        return -1, 0.0
     else:
         pseudo_dat = pd.concat([t1_pseudo,t2_pseudo],axis=1).to_numpy()
         # Calculate distance
@@ -184,11 +217,13 @@ def cal_cos_dist(obj,tp1,tp2,t1_s,t2_s,t1_df,t2_df,inter_genes):
         cos_dists = [check_cosine(v,centroid) for v in pseudo_dat]
         
     return cos_dists
+    # return cos_dists, kl_sim
+
 
 # Load edge info
 def get_edge_info(obj, tp1):
-    # Sorting candidate edges using cosine distance
-    COS_PARAM = 5
+    # Sorting candidate edges using cosine distance [Modi: 25-11-21]
+    COS_PARAM = 6
     sort_edge_info = sorted(obj.edge_info[tp1], key=lambda x:x[COS_PARAM])
 
     # Save edge value for cell type of tp1
@@ -204,15 +239,32 @@ def get_edge_info(obj, tp1):
     
     return edge_info_dict
 
-# Calculate rank values of edges
-def cal_rank(edge_weight, sw, dw):
+# Calculate rank values of edges [Modi: 25-11-21]
+def cal_rank(edge_weight, sw, dw, kw):
+    """
+    edge_weight columns:
+    0: t1_g
+    1: t2_s
+    2: t2_g
+    3: js_sim
+    4: cos_cent
+    5: kl_sim
+    6: adj_p
+    """
     edge_weight = np.array(edge_weight)
     candidate_n = len(edge_weight)+1
 
-    SIM_PARAM, COS_PARAM = 3, 5
+    SIM_PARAM, COS_PARAM = 3, 4
+    # KL_PARAM = 5
     sim_rank = candidate_n - ss.rankdata(edge_weight[:,SIM_PARAM], method='min')
+    # Add KL parameter
+    # kl_rank = candidate_n - ss.rankdata(edge_weight[:, KL_PARAM], method='min')
     dist_rank = ss.rankdata(edge_weight[:,COS_PARAM], method='min')
-    rank_sum = ((sw*sim_rank)+(dw*dist_rank))/2
+    # rank_sum = ((sw*sim_rank)+(dw*dist_rank))/2
+    rank_sum = (
+        (sw * sim_rank) +
+        # kw * kl_rank +
+        (dw * dist_rank)) / 2
 
     # Save rank test results
     conversion = []
@@ -294,7 +346,7 @@ def check_standard_path(obj, tp1, t1_s, top_rank, einfo, einfo_results):
     
     path_pvals = obj.pval_df.copy()
     sig_paths = path_pvals[(path_pvals["Interval"]==tp1)]
-    sig_paths = sig_paths[(sig_paths["p-value"]<=obj.pval_th)]
+    sig_paths = sig_paths[(sig_paths["adj_p-value"]<=obj.pval_th)]
     answers = sig_paths[sig_paths["source"]==source_ct]['target'].values.tolist()
 
     if os.path.isfile(fname):

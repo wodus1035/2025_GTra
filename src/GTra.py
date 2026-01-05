@@ -14,8 +14,6 @@ from scipy.sparse import csr_matrix
 from preproc import filter_genes, concat_meta
 from gutils import JS, JS_threshold_test, cal_cos_dist, get_edge_info, cal_rank, get_networks, check_standard_path
 
-import warnings
-
 
 class GTraObject(object):
     class GTraParam:
@@ -23,7 +21,7 @@ class GTraObject(object):
             "low_gene_num", "low_cell_num", "mito_percent", "filter_cell_n", "hvg_n",
             "norm_flag", "label_flag", "gene_norm_flag", "cn_neighbors", "gn_neighbors", 
             "cn_cluster_resolution", "gn_cluster_resolution", "dist_threshold", "sw", "dw",
-            "top_rank", "static_th", "answer_path_type", "answer_path_dir",
+            "kw","top_rank", "static_th", "answer_path_type", "answer_path_dir",
             "cell_type_label", "time_point_label", "output_dir", "output_name"
         )
 
@@ -47,8 +45,9 @@ class GTraObject(object):
 
             # STEP 2: Select candidate edges and construct trajectory
             self.dist_threshold = 0.5 # consine distance
-            self.sw = 0.3
-            self.dw = 1 - self.sw
+            self.sw = 1
+            self.dw = 3
+            self.kw = 5
             self.top_rank = 10 # # of candidiate edges
             self.answer_path_type = "" # Answer path type (e.g. PBMC, NEURON)
             self.answer_path_dir = "" # Answer path directory
@@ -74,6 +73,7 @@ class GTraObject(object):
         self.tp_genes_dict = dict()
         self.gene_label_info = dict()
         self.ccmatrix = dict()
+        self.celltype_colors = dict()
 
         # Parameters for STEP 2
         self.ctc_list = dict()
@@ -81,12 +81,11 @@ class GTraObject(object):
         self.edge_info = dict()
         self.selected_edges = dict()
         self.f = lambda x: x
-        self.node_info = pd.DataFrame.from_records(
-            list(map(self.f, [])), columns=["from","to","sim","cos_dist", "rank_val"]
-            )
+        self.node_info = pd.DataFrame(columns=["from", "to", "sim", "cos_dist", "rank_val"])
+
         self.node_cnt = 0
         self.net_info = [[[]]]
-        self.answer_path = pd.DataFrame()
+        self.answer_path = pd.DataFrame() 
         self.cnt_dict = dict()
         self.rank_dict = dict()
         self.candidate_dict = dict()
@@ -124,6 +123,7 @@ class GTraObject(object):
 
         self.tp_data_dict[self.tp_data_num] = adata
         self.tp_data_num += 1
+        
 
     # Filtering low expressed genes
     def select_genes(self):
@@ -132,15 +132,12 @@ class GTraObject(object):
             X = self.tp_data_dict[time][:, fgenes].copy()
 
             if time == 0: self.genes = fgenes
-            # Normalization
-            # if self.params.gene_norm_flag:
-            #     X.layers['counts'] = X.to_df().copy()
-            #     sc.pp.normalize_total(X, target_sum=1e4)
-            #     sc.pp.log1p(X)
-            
+
             self.tp_data_dict[time] = X
-    
+
+    ##########################################################
     ## ------- STEP 1: GTra's clustering ------------------ ##
+    ##########################################################
 
     # Perform consensus clustering (GTra)
     def cc_clustering(self, N=30):
@@ -148,7 +145,9 @@ class GTraObject(object):
         parallel_testing(self, N=N)
         get_cc_clusters(self)
 
+    #############################################################
     ## ------- STEP 2: Construct cell-state trajectory ------- ##
+    #############################################################
 
     # Calculate edge score
     def cal_edge_score(self, tp1, tp2):
@@ -181,11 +180,17 @@ class GTraObject(object):
                         if sim < optimal_th:
                             continue
 
+                        # dist, kl_sim = cal_cos_dist(
+                        #     self, tp1, tp2, t1_s, t2_s, t1_df, t2_df, inter_genes
+                        # )
                         dist = cal_cos_dist(
                             self, tp1, tp2, t1_s, t2_s, t1_df, t2_df, inter_genes
                         )
                         if dist == -1:
                             continue
+                        # if kl_sim < 0.05:
+                        #     continue
+
                         # Within distance of edge
                         cent = np.mean(dist)
 
@@ -194,36 +199,65 @@ class GTraObject(object):
                             einfo[t2_s] = []
 
                         dists[t2_s].append(dist)
+                        # einfo[t2_s].append([t1_s, t1_g, t2_s, t2_g, sim, cent, kl_sim])
                         einfo[t2_s].append([t1_s, t1_g, t2_s, t2_g, sim, cent])
                         cos_dists.append(dist)
 
             # Population
             pop_cos = np.array(sum(cos_dists, []))
 
-            # Statistical test (non-parametric test)
+            # Statistical test (non-parametric test) + FDR correciton
+            ## 2025-10-29 code modification
             num_edges = 0
-            p_dict = {}
+            all_pvals = []
+            edge_refs = []
             for k in dists:
-                p_dict[k] = {}
                 for i, dat in enumerate(dists[k]):
-                    _, pval = wilcoxon(
-                        np.array(dat) - np.mean(pop_cos), zero_method="zsplit"
-                    )
-                    num_edges += 1
-                    p_dict[k][i] = pval
-
-            # Calculate adjusted p-value
-            for k in p_dict:
-                for i, p in p_dict[k].items():
-                    z = np.mean(pop_cos) - np.mean(dists[k][i])
-                    # Bonfferoni correction (adj P-val)
-                    adj_p = min(p * num_edges, 1.0)
-
-                    if (z < 0) | (adj_p > 0.05):
+                    if len(dat) < 2 or np.allclose(dat, np.mean(pop_cos)):
                         continue
+                    _, pval = wilcoxon(np.array(dat)-np.mean(pop_cos), zero_method='zsplit')
+                    num_edges +=1
+                    all_pvals.append(pval)
+                    edge_refs.append((k, i))
 
-                    einfo[k][i].extend([adj_p])
-                    edge_info.append(einfo[k][i])
+            from statsmodels.stats.multitest import multipletests
+            # Skip if no valid p-values
+            if len(all_pvals) == 0: continue
+
+            rejected, adj_pvals, _, _ = multipletests(all_pvals, alpha=0.05, method='fdr_bh')
+            for (k, i), adj_p, reject in zip(edge_refs, adj_pvals, rejected):
+                if not reject:
+                    continue
+                z = np.mean(pop_cos) - np.mean(dists[k][i])
+                if z < 0:
+                    continue
+                einfo[k][i].extend([adj_p])
+                edge_info.append(einfo[k][i])
+
+
+            # num_edges = 0
+            # p_dict = {}
+            # for k in dists:
+            #     p_dict[k] = {}
+            #     for i, dat in enumerate(dists[k]):
+            #         _, pval = wilcoxon(
+            #             np.array(dat) - np.mean(pop_cos), zero_method="zsplit"
+            #         )
+            #         num_edges += 1
+            #         p_dict[k][i] = pval
+
+            # # Calculate adjusted p-value
+            # for k in p_dict:
+            #     for i, p in p_dict[k].items():
+            #         z = np.mean(pop_cos) - np.mean(dists[k][i])
+            #         # Bonfferoni correction (adj P-val)
+            #         adj_p = min(p * num_edges, 1.0)
+
+            #         if (z < 0) | (adj_p > 0.05):
+            #             continue
+
+            #         einfo[k][i].extend([adj_p])
+            #         edge_info.append(einfo[k][i])
 
         self.edge_info[tp1] = edge_info
 
@@ -244,11 +278,11 @@ class GTraObject(object):
                 else:
                     check_edges[s].append(t)
 
-        # Ranking candidate edges
-        RANK_PARAM = 5
+        # Ranking candidate edges [Modi: 25-11-21]
+        RANK_PARAM = -1
         edge_info_results = []
         for t1_s, edge_info in edge_info_dict.items():
-            conv_edge = cal_rank(edge_info, self.params.sw, self.params.dw)
+            conv_edge = cal_rank(edge_info, self.params.sw, self.params.dw, self.params.kw)
             sort_conv_edge = np.array(sorted(conv_edge, key=lambda x: x[RANK_PARAM]))
 
             # Edge candidates that have passed statistical tests
@@ -275,7 +309,7 @@ class GTraObject(object):
         for einfo in edge_info_results:
             source = f"t{str(tp1)}_{str(einfo[0])}_{str(einfo[1])}"
             target = f"t{str(tp2)}_{str(einfo[2])}_{str(einfo[3])}"
-            conv_edge_info.append([source, target, einfo[4], einfo[5], einfo[7]])
+            conv_edge_info.append([source, target, einfo[4], einfo[5], einfo[-1]])
 
         # Save candidate edges
         self.selected_edges[tp1] = conv_edge_info
@@ -296,10 +330,10 @@ class GTraObject(object):
             self.edge_rank_test(tp, tp+1)
         
         # Save edge info
+        records = []
         for tp in range(self.tp_data_num-1):
-            for i in range(len(self.selected_edges[tp])):
-                self.node_info.loc[self.node_cnt] = self.selected_edges[tp][i]
-                self.node_cnt += 1
+            records.extend(self.selected_edges[tp])
+        self.node_info = pd.DataFrame(records, columns=["from","to","sim","cos_dist","rank_val"])
         
     # Construct cell-state trajectories
     def construct_trajectory(self):
@@ -314,7 +348,9 @@ class GTraObject(object):
         # Get candidate path info
         self.net_info = get_networks(self, sub_graphs)
 
+    ################################################################
     ## ------- STEP 3: Gene expression pattern clustering ------- ##
+    ################################################################
 
     # Time-series pattern clustering
     def pattern_clustering(self):
@@ -376,7 +412,7 @@ class GTraObject(object):
         # Save pattern centroid
         save_pattern_centroid(self)
 
-    # ------- Visualization functions --------------------------- ##
+    # ----------------- Visualization functions  -----------------##
 
     # Plotting consensus matrix
     def plot_cluster_matrix(self):
@@ -397,9 +433,15 @@ class GTraObject(object):
         draw_edge_stat(self)
     
     # Plotting cell-state transition graph
-    def plot_transition_grpah(self):
+    def plot_transition_graph(self):
         from visualize import draw_transition_graph
         draw_transition_graph(self)
+
+    
+    # Plotting gene-gene transition matrix
+    def plot_gg_matrix(self):
+        from visualize import draw_gg_matrix
+        draw_gg_matrix(self)
 
     # Plotting expression patterns
     def plot_expressions(self):
