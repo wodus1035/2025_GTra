@@ -9,7 +9,7 @@ It reconstructs **cell-state trajectories and dynamic gene programs** by modelin
 
 GTra directly leverages **longitudinal single-cell transcriptomic data** to infer trajectories of gene expression programs over physical time.
 
-Instead of ordering individual cells along a pseudotime axis, GTra models how **co-expressed gene modules evolve and transition across adjacent time points**, enabling reconstruction of biologically meaningful trajectories without predefined lineage structures.
+Instead of ordering individual cells along a pseudotime axis, GTra explicitly models how **co-expressed gene modules evolve and transition across adjacent time points**, enabling reconstruction of biologically meaningful trajectories without predefined lineage structures.
 
 
 <p align="center">
@@ -32,8 +32,8 @@ Instead of ordering individual cells along a pseudotime axis, GTra models how **
   Gene clusters from adjacent time points are compared using  
   *Jaccard similarity* (gene overlap) and *cosine similarity* (expression directionality), yielding ranked transition scores.
 
-- **Statistical testing and constrained transitions (Answer path)**  
-  Transition edges are statistically validated and filtered using biologically motivated path constraints to remove implausible connections.
+- **Statistical testing and constrained transitions (Optional Answer path)**  
+  Transition edges are statistically validated and filtered using biologically motivated (optional) path constraints to remove implausible connections.
 
 - **Trajectory reconstruction and gene module detection**  
   Directed transition networks are assembled into full trajectories, and genes along each trajectory are summarized into representative temporal expression modules.
@@ -41,6 +41,8 @@ Instead of ordering individual cells along a pseudotime axis, GTra models how **
 ---
 
 ## Quick start
+
+This repository contains the code used to generate the results reported in the accompanying manuscript.
 
 GTra infers trajectories from time-series single-cell RNA-seq data by modeling transitions of gene expression modules across physical time.
 
@@ -100,3 +102,9 @@ Step-by-step tutorials and reproducible examples are provided in the `tutorials/
 - Patient-level trajectory integration
 
 ---
+
+## License
+This project is released under the MIT License.
+
+## Citation
+If you use GTra in your research, please cite the accompanying manuscript.
