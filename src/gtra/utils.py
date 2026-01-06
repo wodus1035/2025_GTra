@@ -4,14 +4,30 @@ import networkx as nx
 
 from scipy.sparse import csr_matrix
 from soyclustering import SphericalKMeans
+from scipy.spatial import distance
 
+import math
 import os
 import re
 
-from preproc import *
+from .preproc import *
+
+
+def magnitude(v):
+    return math.sqrt(sum(v[i]*v[i] for i in range(len(v))))
+
+def normalize(v):
+    vmag=magnitude(v)
+    return [v[i]/vmag for i in range(len(v))]
+
+def vect_mu(v_list):
+    v = np.array(v_list)
+    vsum=np.ndarray.sum(v,axis=0)
+    return normalize(vsum)
+
 
 ## Calculate jaccard similarity
-def Jccard(l1, l2):
+def Jaccard(l1, l2):
     a = set(l1).union(set(l2))
     b = set(l1).intersection(set(l2))
 
@@ -30,7 +46,7 @@ def JS_distribution(obj, tp1, tp2):
     js_list = []
     while (len(t1) != t1_s) and (len(t1[t1_s]) != t1_g):
         # JS analysis
-        sim, inter_genes = Jccard(t1[t1_s][t1_g], t2[t2_s][t2_g])
+        sim, inter_genes = Jaccard(t1[t1_s][t1_g], t2[t2_s][t2_g])
 
         # If size of gene set == 0 then continue
         if len(inter_genes) == 0:
@@ -207,6 +223,79 @@ def extract_shared_vectors(genes1, genes2, mean1, mean2, gene_index):
 
     return mean1[shared_idx], mean2[shared_idx], len(shared_idx)
 
+# Create normalized pseudo-bulk data
+def cal_cos_dist(obj,tp1,tp2,t1_s,t2_s,t1_df,t2_df,inter_genes):
+    # Load cells
+    t1_cells = obj.cell_label_index[tp1][t1_s]
+    t2_cells = obj.cell_label_index[tp2][t2_s]
+
+    # Calculate average of data
+    t1_pseudo = t1_df.loc[list(inter_genes),t1_cells].apply(pd.to_numeric).mean(axis=1)
+    t2_pseudo = t2_df.loc[list(inter_genes),t2_cells].apply(pd.to_numeric).mean(axis=1)
+
+    # Check not expressed genes
+    pseudo_concat = pd.concat([t1_pseudo,t2_pseudo],axis=1)
+    expr_gene_idx = [i for i,val in enumerate(pseudo_concat.sum(axis=1)) if val]
+    expr_genes = list(pseudo_concat.iloc[expr_gene_idx,:].index)
+
+    # Add code: 25-11-21 Normalize to probability distribution
+    # P = to_prob_dist(t1_pseudo)
+    # Q = to_prob_dist(t2_pseudo) 
+    # kl_sim = kl_similarity(P, Q)
+
+    # Calculate cosine distance
+    if len(expr_genes) == 0:
+        return -1, 0.0
+    else:
+        pseudo_dat = pd.concat([t1_pseudo,t2_pseudo],axis=1).to_numpy()
+        # Calculate distance
+        centroid = vect_mu(pseudo_dat)
+
+        # Check dat
+        def check_cosine(u, v):
+            if np.allclose(u, 0) or np.allclose(v, 0):
+                return 1
+            else:
+                return distance.cosine(u,v)
+        # cos_dists = [distance.cosine(v,centroid) for v in pseudo_dat]
+        cos_dists = [check_cosine(v,centroid) for v in pseudo_dat]
+        
+    return cos_dists
+
+def cal_cos_dist_fast(
+    A1, A2,
+    genes, gene_index,
+    cells1, cells2
+):
+    ix = [gene_index[g] for g in genes if g in gene_index]
+    if len(ix) < 2:
+        return -1
+
+    # pseudo-bulk (gene-wise mean across cells)
+    p1 = A1[ix][:, cells1].mean(axis=1)
+    p2 = A2[ix][:, cells2].mean(axis=1)
+
+    # remove non-expressed genes
+    mask = (p1 + p2) > 0
+    if mask.sum() < 2:
+        return -1
+
+    p1 = p1[mask]
+    p2 = p2[mask]
+
+    mu = (p1 + p2) / 2
+
+    def cos_dist(u, v):
+        if np.allclose(u, 0) or np.allclose(v, 0):
+            return 1.0
+        return 1 - np.dot(u, v) / (np.linalg.norm(u) * np.linalg.norm(v))
+
+    return [
+        cos_dist(p1, mu),
+        cos_dist(p2, mu)
+    ]
+
+
 
 def centered_cosine(x, y):
     if x is None or y is None:
@@ -238,12 +327,6 @@ def compute_joint_score(js, cos, jsdiv):
     Final Edge Score
       W * ( alpha·JS + beta·COS + gamma·exp(-JSdiv) )
     """
-    # mu = 0.6
-    # sigma = 0.25
-    # novelty = np.exp(-((cos - mu)**2) / (2 * sigma**2))
-    
-
-    # score = novelty * np.exp(-jsdiv)
     score = cos * np.exp(-jsdiv)
 
     return score
@@ -267,37 +350,14 @@ def get_edge_info(obj, tp1):
     return edge_info_dict
 
 
-def normalize_metrics(js, cos, kl):
-    """
-    Normalize JS, COS, KL metrics into [0,1] domain.
-    """
-    JS_norm  = js                         # already 0~1
-    COS_norm = (cos + 1.0) * 0.5          # [-1,1] → [0,1]
-    KL_norm  = np.exp(-kl)                # small KL → high score
-    
-    return JS_norm, COS_norm, KL_norm
-
-
-def select_by_percentile(edges, pct=0.25):
-    scores = [e[-1] for e in edges]
-    th = np.percentile(scores, 100*(1-pct))   # e.g. top 10%
-    return [e for e in edges if e[-1] >= th]
-
-
-def cal_rank(edge_weight, sw, dw, kw):
+def cal_rank(edge_weight, sw, dw):
     edge_weight = np.array(edge_weight)
     candidate_n = len(edge_weight) + 1
     
-    SIM_PARAM, COS_PARAM, KL_PARAM = 3, 4, 5
+    SIM_PARAM, COS_PARAM = 3, 4
     sim_rank = candidate_n - ss.rankdata(edge_weight[:,SIM_PARAM], method="min")
-    cos_rank = candidate_n - ss.rankdata(edge_weight[:,COS_PARAM], method="min")
-    kl_rank = ss.rankdata(edge_weight[:,KL_PARAM], method="min")
-    
-    rank_sum = (
-        (sw * sim_rank) +
-        (dw * cos_rank) +
-        (kw * kl_rank)
-        )
+    cos_rank = ss.rankdata(edge_weight[:,COS_PARAM], method="min")
+    rank_sum = ((sw*sim_rank)+(dw*cos_rank))/2
     
     # save rank test results
     conversion = []
@@ -308,38 +368,41 @@ def cal_rank(edge_weight, sw, dw, kw):
     
     return conversion
 
-def filter_by_answer_path(obj, tp1, edges_top):
-    """
-    edges_top: sorted by score desc
-    """
+# Check standard path
+def check_standard_path(obj, tp1, t1_s, top_rank, einfo, einfo_results):
+    # Paths that match the source cell type
+    source_ct = get_unique_celltype(obj, tp1, t1_s)
+    
     # Load standard path info
     fname = obj.params.answer_path_dir
+    
+    
+    path_pvals = obj.pval_df.copy()
+    sig_paths = path_pvals[(path_pvals["Interval"]==tp1)]
+    sig_paths = sig_paths[(sig_paths["adj_p-value"]<=obj.pval_th)]
+    answers = sig_paths[sig_paths["source"]==source_ct]['target'].values.tolist()
+
     if os.path.isfile(fname):
         obj.answer_path = pd.read_csv(fname, sep=",")
         paths = obj.answer_path.copy()
+        answer_input = sum(paths.loc[paths['source']==source_ct,
+                                ['target']].values.tolist(),[])
+        answers = list(set(answer_input).intersection(set(answers))).copy()
         
-    path_pvals = obj.pval_df.copy()
-    sig_paths = path_pvals[(path_pvals["Interval"]==tp1)&
-                           (path_pvals["adj_p-value"]<=obj.pval_th)]
     
-    filtered = []
-    for e in edges_top:
-        c1, m1, c2, m2 = e[:4]
-        source_ct = get_unique_celltype(obj, tp1, c1)
-        target_ct = get_unique_celltype(obj, tp1+1, c2)
-        if os.path.isfile(fname):
-            answer_input = sum(paths.loc[paths["source"]==source_ct,
-                                     ["target"]].values.tolist(),[])
-            answers = list(set(answer_input).intersection(set(answers))).copy()     
-        else:
-            answers = sig_paths[sig_paths['source']==source_ct]['target'].values.tolist()
-   
-        if target_ct not in answers:
-            continue
+    # Filter incorrected paths among paths
+    for r in range(top_rank):
+        t2_s = int(einfo[r,:3][1])
+        target_ct = get_unique_celltype(obj, tp1+1, t2_s)
         
-        filtered.append(e)
-
-    return filtered
+        # If target cell type exist not in answer path then continue
+        if target_ct not in answers: continue
+        
+        label_info = list(map(int,einfo[r,:3]))
+        score_info = list(einfo[r,3:])
+        einfo_results.append([t1_s]+label_info+score_info)
+        
+    return einfo_results
 
 # Convert label name
 def _conv_label(label):

@@ -7,23 +7,25 @@ import networkx as nx
 
 from tqdm import tqdm
 
+from scipy.stats import wilcoxon
 from soyclustering import SphericalKMeans
 from scipy.sparse import csr_matrix
 
 from sklearn.metrics.pairwise import cosine_similarity
 
-from preproc import *
-from gutils import *
-from cluster_func import *
+from .cluster_func import statistical_testing
+from .preproc import *
+from .utils import *
+from .cluster_func import *
 
 class GTraObject(object):
     class GTraParam:
-        # __slots__ = (
-        #     "low_gene_num", "low_cell_num", "mito_percent", "hvg_n", "norm_flag",
-        #     "label_flag", "gene_norm_flag", "cn_neighbors", "gn_neighbors", "cn_cluster_resolution",
-        #     "gn_cluster_resolution", "filter_cell_n", "dist_threshold", "sw", "dw", "kw", "top_rank",
-        #     "static_th", "answer_path_type", "answer_path_dir", "cell_type_label", "time_point_label",
-        #     "output_dir","output_name")
+        __slots__ = (
+            "low_gene_num", "low_cell_num", "mito_percent", "hvg_n", "norm_flag",
+            "label_flag", "gene_norm_flag", "cn_neighbors", "gn_neighbors", "cn_cluster_resolution",
+            "gn_cluster_resolution", "filter_cell_n", "dist_threshold", "sw", "dw", "top_rank",
+            "static_th", "answer_path_type", "answer_path_dir", "cell_type_label", "time_point_label",
+            "min_pattern_gene", "output_dir","output_name")
 
         # Basic parameters
         def __init__(self):
@@ -45,7 +47,7 @@ class GTraObject(object):
 
             # Step 2: Select candidate edges and construct trajectories
             self.dist_threshold = .5 # For cosine distance
-            self.sw, self.dw, self.kw = .5, .5, .5 # sw: jaccard, dw: cosine, kw: KL
+            self.sw, self.dw = .3, .7 # sw: jaccard, dw: cosine
             self.top_rank = 10 # candidate's edges
             self.static_th = 90 # threshold of statistical testing
             self.answer_path_type = "" # organism or dataset
@@ -155,6 +157,7 @@ class GTraObject(object):
 
     # Perform consensus clustering
     def find_gclusters(self, N=50):
+        print("Step 1: Identifying cell type-specific gene clusters...")
         statistical_testing(self, N=N)
         cc_clustering(self)
         create_color_dict(self)
@@ -162,120 +165,137 @@ class GTraObject(object):
     ###########################################################################
     ## ============= Step 2: Construct cell-state trajectories ============= ##
     ###########################################################################
-    
-    # Calculate transition scores between adjacent time points
     def cal_edge_score(self, tp1, tp2):
-        """
-        Optimized, vectorized computation of edge scores between time points.
-        """
-        
-        # ------------------------------------------------------
-        # Load Expression Data (cell x gene)
-        # ------------------------------------------------------
-        A1 = self.tp_data_dict[tp1].to_df()
-        A2 = self.tp_data_dict[tp2].to_df()
+        # Load scRNA data
+        t1_df = self.tp_data_dict[tp1].to_df().T
+        t2_df = self.tp_data_dict[tp2].to_df().T
 
-        A1_z = vector_norm(A1)
-        A2_z = vector_norm(A2)
-        
-        # gene clusters at each timepoint
-        GM1 = flatten_gene_modules(self.gene_label_info[tp1])
-        GM2 = flatten_gene_modules(self.gene_label_info[tp2])
-        
-        # JS matrix
-        js_matrix = compute_js_matrix(GM1, GM2, self.genes)
+        # Load gene sets
+        t1_genes = self.gene_label_info[tp1]
+        t2_genes = self.gene_label_info[tp2]
+
+        # Sample and gene cluster index (init)
+        t1_s, t1_g, t2_s, t2_g = 0, 0, 0, 0
+
+        # Get optimal threshold
         optimal_th = JS_threshold_test(self, tp1, tp2)
 
-        
-        # Cluster mean expressions
-        mean1 = compute_cluster_means(A1_z, self.cell_label_index[tp1])
-        mean2 = compute_cluster_means(A2_z, self.cell_label_index[tp2])
-        gene_index = {g:i for i, g in enumerate(A1.columns)}
+        # Comparison intersected gene set between adjacent time points
+        edge_info = []
+        for t1_s in range(len(t1_genes)):
+            cos_dists = []
+            dists = {}
+            einfo = {}
+            for t1_g in range(len(t1_genes[t1_s])):
+                for t2_s in range(len(t2_genes)):
+                    for t2_g in range(len(t2_genes[t2_s])):
+                        sim, inter_genes = Jaccard(
+                            t1_genes[t1_s][t1_g], t2_genes[t2_s][t2_g]
+                        )
+                        if sim < optimal_th: continue
 
-        edges = []
+                        dist = cal_cos_dist(
+                            self, tp1, tp2, t1_s, t2_s, t1_df, t2_df, inter_genes
+                        )
+                        if dist == -1: continue
+                        # Within distance of edge
+                        cent = np.mean(dist)
 
-        for i, (c1, m1, g1_list) in enumerate(GM1):
-            for j, (c2, m2, g2_list) in enumerate(GM2):
+                        if dists.get(t2_s) is None:
+                            dists[t2_s] = []
+                            einfo[t2_s] = []
 
-                js = js_matrix[i, j]
-                if js < optimal_th:
-                    continue
+                        dists[t2_s].append(dist)
+                        einfo[t2_s].append([t1_s, t1_g, t2_s, t2_g, sim, cent])
+                        cos_dists.append(dist)
 
-                # shared gene 기반 vector 추출
-                v1, v2, shared_n = extract_shared_vectors(
-                    g1_list, g2_list,
-                    mean1[c1], mean2[c2],
-                    gene_index
-                )
-                if shared_n == 0:
-                    continue
+            # Population
+            pop_cos = np.array(sum(cos_dists, []))
 
-                # cosine
-                cos = centered_cosine(v1, v2)
-                if cos is None:
-                    continue
+            # Statistical test (non-parametric test) + FDR correciton
+            num_edges = 0
+            p_dict  ={}
+            for k in dists:
+                p_dict[k] = {}
+                for i,dat in enumerate(dists[k]):
+                    _, pval = wilcoxon(np.array(dat)-np.mean(pop_cos), zero_method='zsplit')
+                    num_edges+=1
+                    p_dict[k][i]=pval
 
-                # JS divergence (stable KL)
-                jsdiv = js_divergence(v1, v2)
+            # Calculate adjusted p-value
+            for k in p_dict:
+                for i,p in p_dict[k].items():
+                    z = np.mean(pop_cos)-np.mean(dists[k][i])
+                    # Bonfferoni correction (adj P-val)
+                    adj_p = min(p*num_edges, 1.0)
+                    
+                    if (z<0)|(adj_p>0.05): continue
 
-                # joint score
-                score = compute_joint_score(js, cos, jsdiv)
-                if score is None:
-                    continue
+                    einfo[k][i].extend([adj_p])
+                    edge_info.append(einfo[k][i])
 
-                edges.append([
-                    c1, m1, c2, m2,
-                    float(js), float(cos), float(jsdiv), float(score)
-                ])
-        
-        self.edge_info[tp1] = edges
+        self.edge_info[tp1] = edge_info
     
-    # Select candidate edges with statistical testing and answer path info
-    def edge_score_test(self, tp1, tp2):
-        """
-        edges: list of [c1, m1, c2, m2, js, cos, jsdiv, score]
-        """
-        edges = self.edge_info[tp1]
-        if len(edges) == 0:
-            self.selected_edges[tp1] = []
-            return
         
-        # Edge candidates that have passsed statistical testing
+    # Rank test for candidate edges
+    def edge_rank_test(self, tp1, tp2):
+        # Get edge info for previous time point data
+        edge_info_dict = get_edge_info(self, tp1)
+
+        # Edge candidates that have passed statistical tests
         if len(self.candidate_dict):
             candidated_edges = self.candidate_dict[tp1]
             check_edges = {}
             for i in candidated_edges:
-                tok = i.split('_')
+                tok = i.split("_")
                 s, t = int(tok[0]), int(tok[1])
                 if check_edges.get(s) is None:
                     check_edges[s] = [t]
                 else:
                     check_edges[s].append(t)
+
+        # Ranking candidate edges [Modi: 25-11-21]
+        RANK_PARAM = -1
+        edge_info_results = []
+        for t1_s, edge_info in edge_info_dict.items():
+            conv_edge = cal_rank(edge_info, self.params.sw, self.params.dw)
+            sort_conv_edge = np.array(sorted(conv_edge, key=lambda x: x[RANK_PARAM]))
+
+            # Edge candidates that have passed statistical tests
+            if len(self.candidate_dict) and (check_edges.get(t1_s)):
+                sort_conv_edge = np.array(
+                    [list(i) for i in sort_conv_edge if i[1] in check_edges[t1_s]]
+                )
+
+            top_rank = min(self.params.top_rank, len(sort_conv_edge))
+
+            # If answer path information exist then ~
+            if (self.static_flag == True):
+                edge_info_results = check_standard_path(
+                    self, tp1, t1_s, top_rank, sort_conv_edge, edge_info_results
+                )
+            else:
+                for rank in range(top_rank):
+                    label_info = list(map(int, sort_conv_edge[rank, :3]))
+                    score_info = list(sort_conv_edge[rank, 3:])
+                    edge_info_results.append([t1_s] + label_info + score_info)
+
+        # Convert edge info name
+        conv_edge_info = []
+        for einfo in edge_info_results:
+            source = f"t{str(tp1)}_{str(einfo[0])}_{str(einfo[1])}"
+            target = f"t{str(tp2)}_{str(einfo[2])}_{str(einfo[3])}"
+            conv_edge_info.append([source, target, einfo[4], einfo[5], einfo[-1]])
+
+        # Save candidate edges
+        self.selected_edges[tp1] = conv_edge_info
         
-        # ---- 1) Score based alignment ---- #
-        edges_sorted = sorted(edges, key=lambda x: x[-1], reverse=True)
-        
-        # ---- 2) Top-k selection ---- #
-        edges_top = select_by_percentile(edges_sorted,pct=0.25)
-
-        # ---- 3) Answer path filtering (선택사항) ---- #
-        if self.static_flag:
-            edges_top = filter_by_answer_path(self, tp1, edges_top)
-
-        # ---- 4) Edge name match ---- #
-        final_edges = []
-        for e in edges_top:
-            c1, m1, c2, m2 = e[:4]
-            source = f"t{tp1}_{c1}_{m1}"
-            target = f"t{tp2}_{c2}_{m2}"
-            final_edges.append([source, target]+e[4:])
-
-        self.selected_edges[tp1] = final_edges
     
     # Select edges
     def select_candidate_edges(self):
         self.cell_type_info = concat_meta(self)
-        display_name = "Construct cell-state trajectories.."
+        
+        display_name = "Step 2: Constructing cell-state trajectories.."
         for tp in tqdm(
             range(self.tp_data_num-1),
             total=self.tp_data_num-1,
@@ -285,7 +305,7 @@ class GTraObject(object):
             leave=True
         ):
             self.cal_edge_score(tp, tp+1)
-            self.edge_score_test(tp, tp+1)
+            self.edge_rank_test(tp, tp+1)
         
         # Save edge info
         records = []
@@ -293,7 +313,7 @@ class GTraObject(object):
             records.extend(self.selected_edges[tp])
         
         self.node_info = pd.DataFrame(records, columns=[
-            "from", "to", "sim", "cos", "js_div", "Escore"
+            "from", "to", "sim", "cos", "rank_val"
         ])
     
     # Construct cell-state trajectories
@@ -315,15 +335,13 @@ class GTraObject(object):
     ## ============= Step 3: Gene expression pattern clustering ============= ##
     ############################################################################
 
-    # from gutils import group_cell_type_trajectory, merge_expr, elbow_method
-
     # Time-series pattern clustering
     def pattern_clustering(self):
 
         self.merge_path_dict = group_cell_type_trajectory(self.net_info)
 
         path_label = 0
-        displays = "Time-series pattern clustering..."
+        displays = "Step 3: Detecting time-series pattern clustering..."
         mpdv = list(self.merge_path_dict.values())
         for i in tqdm(
             range(len(mpdv)),
@@ -367,3 +385,21 @@ class GTraObject(object):
         new_mp_dict = merge_sim_patterns(self) # Merge selected patterns
         self.merge_pattern_dict = renaming_pattern_id(new_mp_dict) # Convert pattern name
         save_pattern_centroid(self) # Save pattern centroid    
+    
+    
+    # -------------------------- Visualization functions -------------------------- #
+    
+    # Plotting edge static results
+    def plot_edge_statistic(self):
+        from .visualize import draw_edge_stat
+        draw_edge_stat(self)
+    
+    # Plotting cell-state transition graph
+    def plot_cell_state_graph(self):
+        from .visualize import draw_transition_graph
+        draw_transition_graph(self)
+    
+    # Plotting gene cluster-gene-cluster matrix
+    def plot_gg_matrix(self):
+        from .visualize import draw_gg_matrix
+        draw_gg_matrix(self)

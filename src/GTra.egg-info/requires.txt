@@ -1,8 +1,0 @@
-numpy
-scipy
-pandas
-scikit-learn
-soyclustering
-networkx
-anndata
-scanpy

@@ -22,7 +22,7 @@ from matplotlib.colors import PowerNorm
 
 
 
-from cluster_func import _calc_gap
+from .cluster_func import _calc_gap
 
 
 cmaps = ['#4E79A7', '#F28E2B', '#E15759', '#76B7B2', '#59A14F',
@@ -413,16 +413,16 @@ def draw_gg_matrix(obj):
         vals = pivot_df.values
         # nonzero = vals[vals >= 0]
 
-        vmin = vals.min()
-        vmax = vals.max()   # 또는 percentile로 살짝 자르기
+        # vmin = vals.min()
+        # vmax = vals.max()   # 또는 percentile로 살짝 자르기
         
         sns.heatmap(
             pivot_df,
             cmap = "viridis",
             # norm = PowerNorm(gamma=0.35),
             ax=ax,
-            vmin=vmin,
-            vmax=vmax,
+            # vmin=vmin,
+            # vmax=vmax,
             cbar_kws={
                 'label': 'Transition strength',
                 'shrink': 0.65

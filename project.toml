@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gtra"
+version = "0.1.0"
+description = "Gene expression pattern-based Trajectory analysis"
+readme = "README.md"
+requires-python = ">=3.8"
+
+authors = [
+    { name = "Jaeyeon Jang" }
+]
+
+dependencies = [
+    "numpy",
+    "scipy",
+    "scanpy",
+    "scikit-learn",
+    "networkx",
+    "matplotlib",
+    "soyclustering"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
