@@ -29,8 +29,7 @@ Instead of ordering individual cells along a pseudotime axis, GTra explicitly mo
   Cell type–specific gene clusters are identified using gene–gene neighborhood graphs.
 
 - **Inter-temporal transition scoring**  
-  Gene clusters from adjacent time points are compared using  
-  *Jaccard similarity* (gene overlap) and *cosine similarity* (expression directionality), yielding ranked transition scores.
+  Gene clusters from adjacent time points are compared using *Jaccard similarity* (gene overlap) and *cosine similarity* (expression directionality), yielding ranked transition scores.
 
 - **Statistical testing and constrained transitions (Optional Answer path)**  
   Transition edges are statistically validated and filtered using biologically motivated (optional) path constraints to remove implausible connections.
