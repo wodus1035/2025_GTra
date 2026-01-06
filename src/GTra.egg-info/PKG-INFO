@@ -1,0 +1,14 @@
+Metadata-Version: 2.1
+Name: GTra
+Version: 1.0.0
+Summary: Gene expression pattern based trajectory inference for time-series scRNA-seq data
+Author: Jaeyeon Jang
+Requires-Python: >=3.8
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: pandas
+Requires-Dist: scikit-learn
+Requires-Dist: soyclustering
+Requires-Dist: networkx
+Requires-Dist: anndata
+Requires-Dist: scanpy

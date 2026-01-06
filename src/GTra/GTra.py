@@ -11,8 +11,8 @@ from scipy.stats import wilcoxon
 from soyclustering import SphericalKMeans
 from scipy.sparse import csr_matrix
 
-from preproc import filter_genes, concat_meta
-from gutils import JS, JS_threshold_test, cal_cos_dist, get_edge_info, cal_rank, get_networks, check_standard_path
+from .preproc import filter_genes, concat_meta
+from .gutils import JS, JS_threshold_test, cal_cos_dist, get_edge_info, cal_rank, get_networks, check_standard_path
 
 
 class GTraObject(object):
@@ -141,7 +141,7 @@ class GTraObject(object):
 
     # Perform consensus clustering (GTra)
     def cc_clustering(self, N=30):
-        from cluster_func import parallel_testing, get_cc_clusters
+        from .cluster_func import parallel_testing, get_cc_clusters
         parallel_testing(self, N=N)
         get_cc_clusters(self)
 
@@ -354,8 +354,8 @@ class GTraObject(object):
 
     # Time-series pattern clustering
     def pattern_clustering(self):
-        from gutils import group_cell_type_trajectory, merge_expr, elbow_method
-        from gutils import pattern_filtering, merge_sim_patterns, renaming_pattern_id, save_pattern_centroid
+        from .gutils import group_cell_type_trajectory, merge_expr, elbow_method
+        from .gutils import pattern_filtering, merge_sim_patterns, renaming_pattern_id, save_pattern_centroid
 
         self.merge_path_dict = group_cell_type_trajectory(self.net_info)
 
@@ -416,7 +416,7 @@ class GTraObject(object):
 
     # Plotting consensus matrix
     def plot_cluster_matrix(self):
-        from visualize import draw_ccmatrix
+        from .visualize import draw_ccmatrix
         out_dir = self.params.output_dir
         for tp, cl in self.ccmatrix.items():
             df = self.tp_data_dict[tp].obs.drop_duplicates()
@@ -429,26 +429,26 @@ class GTraObject(object):
     
     # Plotting edge static results
     def plot_edge_stat(self):
-        from visualize import draw_edge_stat
+        from .visualize import draw_edge_stat
         draw_edge_stat(self)
     
     # Plotting cell-state transition graph
     def plot_transition_graph(self):
-        from visualize import draw_transition_graph
+        from .visualize import draw_transition_graph
         draw_transition_graph(self)
 
     
     # Plotting gene-gene transition matrix
     def plot_gg_matrix(self):
-        from visualize import draw_gg_matrix
+        from .visualize import draw_gg_matrix
         draw_gg_matrix(self)
 
     # Plotting expression patterns
     def plot_expressions(self):
-        from visualize import draw_patterns
+        from .visualize import draw_patterns
         draw_patterns(self)
     
     # Plotting cell-state trajectories
     def plot_trajectory(self):
-        from visualize import draw_trajectories
+        from .visualize import draw_trajectories
         draw_trajectories(self)

@@ -11,8 +11,8 @@ from sklearn.neighbors import NearestNeighbors
 from scipy.cluster.hierarchy import linkage, fcluster
 from kneed import KneeLocator
 
-from GTra import *
-from preproc import *
+from .GTra import *
+from .preproc import *
 from joblib import Parallel, delayed
 
 
@@ -157,6 +157,7 @@ def extract_dat(obj):
 
 # Build boot obj from safe data
 def build_boot_obj(dat):
+    from .GTra import GTraObject
     obj = GTraObject()
     obj.tp_data_dict = dat['tp_data_dict']
     obj.tp_data_num = dat['tp_data_num']
@@ -178,6 +179,7 @@ def create_random_cells(obj, tp):
 
 # Parallel Clustering for statistical testing
 def parallel_clustering(dat, idx, N):
+    from .preproc import concat_meta, save_stat_res, get_gcinfo
     boot_obj = build_boot_obj(dat)
 
     # GTra's clustering
@@ -228,7 +230,7 @@ def parallel_clustering(dat, idx, N):
 
 # GTra's statistical testing
 def parallel_testing(obj, N=10):
-    from preproc import get_rankinfo, get_ccmatrix, rank_distribution, cal_pvals
+    from .preproc import get_rankinfo, get_ccmatrix, rank_distribution, cal_pvals
     n_cores = 40
     # Perform N times
     dat = extract_dat(obj)
@@ -268,7 +270,7 @@ def parallel_testing(obj, N=10):
 
 # Get consensus-cluster results
 def get_cc_clusters(obj):
-    from gutils import calc_gap
+    from .gutils import calc_gap
 
     cc_dict = obj.ccmatrix.copy()
     genes = obj.genes.copy()

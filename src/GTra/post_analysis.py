@@ -22,7 +22,7 @@ from scipy.stats import friedmanchisquare
 from scipy.stats import pearsonr
 from sklearn.metrics.pairwise import cosine_similarity
 
-sys.path.append("/data1/home/jyj/PROJECT/2025_GTra/src")
+# sys.path.append("/data1/home/jyj/PROJECT/2025_GTra/src")
 
 import GTra as gt
 
