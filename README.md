@@ -106,5 +106,4 @@ Step-by-step tutorials and reproducible examples are provided in the `tutorials/
 ## License
 This project is released under the MIT License.
 
-## Citation
-If you use GTra in your research, please cite the accompanying manuscript.
+--
