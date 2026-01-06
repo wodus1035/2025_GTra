@@ -1,0 +1,657 @@
+import numpy as np
+import scipy.stats as ss
+import networkx as nx
+
+from scipy.sparse import csr_matrix
+from soyclustering import SphericalKMeans
+
+import os
+import re
+
+from preproc import *
+
+## Calculate jaccard similarity
+def Jccard(l1, l2):
+    a = set(l1).union(set(l2))
+    b = set(l1).intersection(set(l2))
+
+    return len(b) / len(a), b
+
+## Jaccard similarity distribution
+def JS_distribution(obj, tp1, tp2):
+    # Load gene sets of each time point
+    t1 = obj.gene_label_info[tp1]
+    t2 = obj.gene_label_info[tp2]
+
+    # Sample and gene cluster index (init)
+    t1_s, t1_g, t2_s, t2_g = 0, 0, 0, 0
+
+    # Comparison intersected genes between adjacent time points
+    js_list = []
+    while (len(t1) != t1_s) and (len(t1[t1_s]) != t1_g):
+        # JS analysis
+        sim, inter_genes = Jccard(t1[t1_s][t1_g], t2[t2_s][t2_g])
+
+        # If size of gene set == 0 then continue
+        if len(inter_genes) == 0:
+            t1_s,t1_g,t2_s,t2_g = update_idx(t1,t2,t1_s,t1_g,t2_s,t2_g)
+            continue
+        
+        # Save JS results
+        js_list.append([t1_s,t1_g,t2_s,t2_g,sim])
+        t1_s, t1_g, t2_s, t2_g = update_idx(t1,t2,t1_s,t1_g,t2_s,t2_g)
+    
+    return js_list
+
+def JS_threshold_test(obj, tp1, tp2):
+    """
+    Compute the optimal Jaccard threshold between two timepoints.
+
+    Steps:
+      1) Compute JS list
+      2) Sweep threshold from 0 to 1 (step 0.01)
+      3) Compute connection stats
+      4) Min-max scaling
+      5) Select threshold with largest |ctc - gtg|
+    """
+    
+    # === 1) JS distribution === #
+    js_list = JS_distribution(obj, tp1, tp2)
+    if len(js_list) == 0:
+        return 0.0
+
+    # Extract JS values only
+    js_values = np.array([x[4] for x in js_list])
+
+    # === 2) Pre-sort high → low === #
+    sorted_idx = np.argsort(-js_values)
+    js_sorted = js_values[sorted_idx]
+    list_sorted = np.array(js_list, dtype=object)[sorted_idx]
+
+    # Threshold sweep
+    thresholds = np.arange(0.0, 1.01, 0.01)
+
+    ctc_list = []
+    gtg_list = []
+
+    for th in thresholds:
+        # mask JS >= th
+        mask = js_sorted >= th
+        selected = list_sorted[mask]
+
+        if len(selected) == 0:
+            ctc_list.append(0)
+            gtg_list.append(0)
+            break
+
+        # === 3) connection statistics === #
+        pairs = [(x[0], x[2]) for x in selected]   # (cell1, cell2)
+        unique_pairs = set(pairs)
+
+        ctc = len(unique_pairs)
+        gtg = len(pairs)
+
+        ctc_list.append(ctc)
+        gtg_list.append(gtg)
+
+        if ctc == 0 or gtg == 0:
+            break
+
+    # convert to arrays
+    ctc_arr = np.array(ctc_list)
+    gtg_arr = np.array(gtg_list)
+    th_arr  = thresholds[:len(ctc_arr)]
+
+    # === 4) min-max scaling === #
+    def scale(x):
+        if x.max() == x.min():
+            return np.zeros_like(x)
+        return (x - x.min()) / (x.max() - x.min())
+
+    ctc_scaled = scale(ctc_arr)
+    gtg_scaled = scale(gtg_arr)
+
+    # save for debugging
+    obj.ctc_list[tp1] = ctc_scaled
+    obj.gtg_list[tp1] = gtg_scaled
+
+    # === 5) gap curve: |ctc - gtg| === #
+    gap = np.abs(ctc_scaled - gtg_scaled)
+
+    top2_idx = np.argsort(-gap)[:2]
+    best_idx = min(top2_idx) if len(top2_idx) > 1 else top2_idx[0]
+
+    optimal_th = th_arr[best_idx]
+    return optimal_th
+
+
+def flatten_gene_modules(gene_info):
+    """
+    Convert hierarchical structure gene info[cluster][module] -> flat list.
+    Each element = (cluster idx, module idx, gene_list)
+    """
+    flat = []
+    for c_idx, modules in enumerate(gene_info):
+        for m_idx, gene_list in enumerate(modules):
+            flat.append((c_idx, m_idx, gene_list))
+    return flat
+
+def compute_js_matrix(GM1, GM2, all_genes):
+    """
+    Compute Jaccard similarity for all module pairs in matrix
+    """
+    gene_index = {g: i for i, g in enumerate(all_genes)}
+    G = len(all_genes)
+    
+    n1, n2 = len(GM1), len(GM2)
+    
+    B1 = np.zeros((n1, G), dtype=np.uint8)
+    B2 = np.zeros((n2, G), dtype=np.uint8)
+    
+    for i, (_,_, genes) in enumerate(GM1):
+        idx = [gene_index[g] for g in genes if g in gene_index]
+        B1[i, idx] = 1
+    
+    for j, (_,_, genes) in enumerate(GM2):
+        idx = [gene_index[g] for g in genes if g in gene_index]
+        B2[j, idx] = 1
+        
+    inter = B1 @ B2.T
+    sum1 = B1.sum(axis=1)[:,None]
+    sum2 = B2.sum(axis=1)[None,:]
+    union = sum1 + sum2 - inter + 1e-10
+    
+    return inter/union
+
+def CPM(X):
+    lib = X.sum(axis=1)
+    lib = lib.replace(0, 1e-9)  # avoid divide-by-zero
+    X_norm = X.div(lib, axis=0) * 1e6
+    return X_norm
+
+def vector_norm(X):
+    X_norm = CPM(X)
+    X_log = np.log1p(X_norm)
+    return X_log
+
+def compute_cluster_means(df, cell_idx):
+    """
+    df: cell x gene matrix
+    cell_idx: list of list (cluster -> cells)
+    Returns: cluster_mean_matrix (C x G)
+    """
+    C = len(cell_idx)
+    G = df.shape[1]
+    means = np.zeros((C, G))
+
+    for c, cells in enumerate(cell_idx):
+        means[c] = df.loc[cells].mean(axis=0).values
+    
+    return means
+
+
+def extract_shared_vectors(genes1, genes2, mean1, mean2, gene_index):
+    """
+    Return:
+      v1_sub, v2_sub → 서로 공유된 gene positions만 남긴 vector
+      shared_n        → shared gene count
+    """
+    set1 = set(genes1)
+    set2 = set(genes2)
+    shared = list(set1.intersection(set2))
+
+    shared_idx = [gene_index[g] for g in shared if g in gene_index]
+
+    if len(shared_idx) == 0:
+        return None, None, 0
+
+    return mean1[shared_idx], mean2[shared_idx], len(shared_idx)
+
+
+def centered_cosine(x, y):
+    if x is None or y is None:
+        return None
+    x_c = x - x.mean()
+    y_c = y - y.mean()
+    num = np.dot(x_c, y_c)
+    den = np.linalg.norm(x_c) * np.linalg.norm(y_c) + 1e-9
+    return num / den
+
+
+def js_divergence(p, q):
+    if p is None or q is None:
+        return None
+
+    p = p + 1e-9
+    q = q + 1e-9
+    p = p / p.sum()
+    q = q / q.sum()
+    m = 0.5 * (p + q)
+
+    kl1 = np.sum(p * (np.log(p) - np.log(m)))
+    kl2 = np.sum(q * (np.log(q) - np.log(m)))
+    return 0.5 * (kl1 + kl2)
+
+
+def compute_joint_score(js, cos, jsdiv):
+    """
+    Final Edge Score
+      W * ( alpha·JS + beta·COS + gamma·exp(-JSdiv) )
+    """
+    # mu = 0.6
+    # sigma = 0.25
+    # novelty = np.exp(-((cos - mu)**2) / (2 * sigma**2))
+    
+
+    # score = novelty * np.exp(-jsdiv)
+    score = cos * np.exp(-jsdiv)
+
+    return score
+
+
+def get_edge_info(obj, tp1):
+    COS_PARAM = 5
+    sort_edge_info = sorted(obj.edge_info[tp1], 
+                            key=lambda x:x[COS_PARAM], reverse=True)
+    
+    # Save edge values for tp1's cell type
+    edge_info_dict = {}
+    source_genes_info = obj.gene_label_info[tp1]
+    for c in range(len(source_genes_info)):
+        for edge in sort_edge_info:
+            if edge[0] == c:
+                if c not in edge_info_dict:
+                    edge_info_dict[c] = [edge[1:]]
+                else:
+                    edge_info_dict[c].append(edge[1:])
+    return edge_info_dict
+
+
+def normalize_metrics(js, cos, kl):
+    """
+    Normalize JS, COS, KL metrics into [0,1] domain.
+    """
+    JS_norm  = js                         # already 0~1
+    COS_norm = (cos + 1.0) * 0.5          # [-1,1] → [0,1]
+    KL_norm  = np.exp(-kl)                # small KL → high score
+    
+    return JS_norm, COS_norm, KL_norm
+
+
+def select_by_percentile(edges, pct=0.25):
+    scores = [e[-1] for e in edges]
+    th = np.percentile(scores, 100*(1-pct))   # e.g. top 10%
+    return [e for e in edges if e[-1] >= th]
+
+
+def cal_rank(edge_weight, sw, dw, kw):
+    edge_weight = np.array(edge_weight)
+    candidate_n = len(edge_weight) + 1
+    
+    SIM_PARAM, COS_PARAM, KL_PARAM = 3, 4, 5
+    sim_rank = candidate_n - ss.rankdata(edge_weight[:,SIM_PARAM], method="min")
+    cos_rank = candidate_n - ss.rankdata(edge_weight[:,COS_PARAM], method="min")
+    kl_rank = ss.rankdata(edge_weight[:,KL_PARAM], method="min")
+    
+    rank_sum = (
+        (sw * sim_rank) +
+        (dw * cos_rank) +
+        (kw * kl_rank)
+        )
+    
+    # save rank test results
+    conversion = []
+    for i in range(len(edge_weight)):
+        origin = list(edge_weight[i])
+        origin.extend([round(list(rank_sum)[i],3)])
+        conversion.append(origin)
+    
+    return conversion
+
+def filter_by_answer_path(obj, tp1, edges_top):
+    """
+    edges_top: sorted by score desc
+    """
+    # Load standard path info
+    fname = obj.params.answer_path_dir
+    if os.path.isfile(fname):
+        obj.answer_path = pd.read_csv(fname, sep=",")
+        paths = obj.answer_path.copy()
+        
+    path_pvals = obj.pval_df.copy()
+    sig_paths = path_pvals[(path_pvals["Interval"]==tp1)&
+                           (path_pvals["adj_p-value"]<=obj.pval_th)]
+    
+    filtered = []
+    for e in edges_top:
+        c1, m1, c2, m2 = e[:4]
+        source_ct = get_unique_celltype(obj, tp1, c1)
+        target_ct = get_unique_celltype(obj, tp1+1, c2)
+        if os.path.isfile(fname):
+            answer_input = sum(paths.loc[paths["source"]==source_ct,
+                                     ["target"]].values.tolist(),[])
+            answers = list(set(answer_input).intersection(set(answers))).copy()     
+        else:
+            answers = sig_paths[sig_paths['source']==source_ct]['target'].values.tolist()
+   
+        if target_ct not in answers:
+            continue
+        
+        filtered.append(e)
+
+    return filtered
+
+# Convert label name
+def _conv_label(label):
+    t, c, g = map(int, re.findall(r'\d+', label))
+    return t, c, g
+
+def _get_inter_genes(obj, path):
+    t, c, g = _conv_label(path[0])
+    inter_genes = set(obj.gene_label_info[t][c][g])
+    
+    for node in path[1:]:
+        t, c, g = _conv_label(node)
+        inter_genes &= set(obj.gene_label_info[t][c][g])
+        
+        if not inter_genes:
+            break
+    
+    return inter_genes
+
+
+# Create candidate paths
+def get_networks(obj, sub_graphs, inter_gene_th=10):
+    networks = []
+    
+    for sub in sub_graphs:
+        nodes = sorted(sub.nodes(), key=lambda x: float(re.findall(r'\d+', x)[0]))
+        
+        first_time = nodes[0].split('_')[0]
+        last_time = nodes[-1].split('_')[0]
+        
+        sources = [n for n in nodes if n.startswith(first_time)]
+        targets = [n for n in nodes if n.startswith(last_time)]
+        
+        for s in sources:
+            for t in targets:
+                for path in nx.all_simple_paths(sub, source=s, target=t):
+                    inter_genes = _get_inter_genes(obj, path)
+                    
+                    if len(inter_genes) > inter_gene_th:
+                        networks.append(path)
+                        obj.path_gene_sets[tuple(path)] = inter_genes
+    
+    return networks
+
+## -------------- Helper function for step 3 -------------- ##
+# Constructing cell type-specific trajectory
+def group_cell_type_trajectory(net_info):
+    merge_path_dict = {}
+    for path in net_info:
+        cell_type_path = [node[:node.rfind('_')] for node in path]
+        key = tuple(cell_type_path)
+
+        if merge_path_dict.get(key) is None:
+            merge_path_dict[key] = [path]
+        else:
+            merge_path_dict[key].append(path)
+
+    return merge_path_dict
+
+# Concat expression matrix
+def merge_expr(obj, path):
+    """
+    Merge time-series expression matrix along a given answer path.
+
+    For each node in the path, gene expression is averaged across
+    cells belonging to the corresponding cell type at that time point.
+    Genes with zero expression across all time points are removed.
+    """
+
+    # --- genes involved in this path ---
+    path_genes = list(obj.path_gene_sets[tuple(path)])
+
+    expr_list = []
+    times = []
+
+    for node in path:
+        # --- parse node label (fast & safe) ---
+        # expected format: t{time}_{celltype}_{cluster}
+        tname, cname, _ = map(int, re.findall(r'\d+', node))
+
+        # --- cell indices ---
+        cnames = obj.cell_label_index[tname][cname]
+
+        # --- expression matrix (genes × cells) ---
+        expr_mat = obj.tp_data_dict[tname].to_df().T
+
+        # --- subset & average ---
+        expr_mean = expr_mat.loc[path_genes, cnames].mean(axis=1)
+
+        expr_list.append(expr_mean)
+        times.append(f"t{tname}")
+
+    # --- concatenate once ---
+    expr_df = pd.concat(expr_list, axis=1)
+    expr_df.columns = times
+    expr_df.index.name = "GeneID"
+
+    # --- remove genes with all-zero expression ---
+    expr_df = expr_df.loc[(expr_df != 0).any(axis=1)]
+
+    return expr_df
+
+
+
+# L2 normalization
+def l2norm(dat):
+    norm = np.sqrt(np.sum(np.square(dat), axis=1))
+    norm = np.array(norm).reshape((-1, 1))
+    norm = dat / norm
+    return norm
+
+
+# Calculate interval confidence
+def cal_ic(df):
+    n = len(df) # freedom
+    std_err = np.std(df.to_numpy()) / n**0.5 # std error
+    ic = ss.t.interval(0.95, n, list(df.mean().values.real), scale=std_err)
+    return ic
+
+
+def elbow_method(dat, k_min=2, k_max=10, random_state=25):
+    """
+    Estimate the optimal number of clusters using the elbow method
+    with Spherical K-Means.
+
+    Parameters
+    ----------
+    dat : array-like (n_samples × n_features)
+        Input data matrix.
+    k_min : int
+        Minimum number of clusters to test.
+    k_max : int
+        Maximum number of clusters to test.
+    random_state : int
+        Random seed for reproducibility.
+    """
+
+    # --- normalize once ---
+    X = csr_matrix(l2norm(dat))
+
+    ks = np.arange(k_min, k_max + 1)
+    inertia = np.empty(len(ks))
+
+    # --- fit models ---
+    for i, k in enumerate(ks):
+        spk = SphericalKMeans(
+            n_clusters=k,
+            random_state=random_state,
+            max_iter=100
+        )
+        spk.fit(X)
+        inertia[i] = spk.inertia_
+
+    # --- trivial / degenerate case ---
+    if len(inertia) <= 2 or np.allclose(inertia, inertia[0]):
+        return k_min
+
+    # --- elbow detection: largest relative drop ---
+    deltas = np.diff(inertia)
+    rel_drop = -deltas / inertia[:-1]   # 상대 감소율
+
+    optimal_idx = np.argmax(rel_drop)
+    optimal_k = ks[optimal_idx + 1]
+
+    return int(optimal_k)
+
+
+def pattern_filtering(obj, deviation_th=0.2):
+    """
+    Filter time-series gene expression patterns based on
+    centroid consistency across time points.
+
+    Patterns with large deviation from the centroid profile
+    are removed.
+    """
+
+    filtered_patterns = {}
+
+    for key, pattern in obj.merge_pattern_dict.items():
+
+        # --- cheap check first ---
+        if pattern.shape[1] != obj.tp_data_num:
+            continue
+
+        # --- normalize ---
+        pt_df = l2norm(pattern)
+
+        # --- centroid (mean profile across genes) ---
+        centroid = pt_df.mean(axis=0).to_numpy()
+
+        # --- intra-cluster deviation ---
+        # cal_ic returns (something, ic_profile)
+        _, ic_profile = cal_ic(pt_df)
+
+        max_dev = np.max(np.abs(ic_profile - centroid))
+
+        if max_dev <= deviation_th:
+            filtered_patterns[key] = pattern
+
+    return filtered_patterns
+
+
+from collections import defaultdict
+# Calculate pearson correlation
+def cal_corr(mp_dict, ptc, pcut=0.05):
+    candidate_pair = set()
+    # Pattern comparison
+    for i,s in enumerate(ptc):
+        for j,t in enumerate(ptc):
+            if i>=j: continue
+            source = l2norm(mp_dict[s]).mean().values
+            target = l2norm(mp_dict[t]).mean().values
+            if ((np.isnan(source)) | (np.isnan(target))).any(): continue
+            stat, pvals = ss.pearsonr(source, target)
+            if (pvals>pcut) or (stat<=0): continue
+            # Save candidate pairs
+            pairs = tuple(sorted((s,t),key=lambda x:int(x.replace('_',''))))
+            candidate_pair.add(pairs)
+    
+    return candidate_pair
+
+def get_candidate_keys(keys):
+    groups = defaultdict(list)
+    for k in keys:
+        group = k.split('_', 1)[0]
+        groups[group].append(k)
+    return dict(groups)
+
+def select_patterns(ptc, mp_dict, sub_nets, key, th=0.2):
+    """
+    Merge correlated pattern groups and keep unmerged patterns.
+    """
+    pt_dict = {}
+
+    ptc_set = set(ptc)
+    merged_keys = set()
+
+    for i, nodes in enumerate(sub_nets):
+        nodes = list(nodes)
+
+        # --- collect patterns once ---
+        mats = [mp_dict[n] for n in nodes]
+        m = pd.concat(mats, axis=0)
+
+        # --- normalize once ---
+        m_norm = l2norm(m)
+        centroid = m_norm.mean(axis=0).to_numpy()
+        _, ic_profile = cal_ic(m_norm)
+
+        max_dev = np.max(np.abs(ic_profile - centroid))
+        if max_dev > th:
+            continue
+
+        merged_keys.update(nodes)
+        pt_dict[f"{key}_M{i}"] = m.drop_duplicates()
+
+    # --- keep unmerged patterns ---
+    for k in ptc_set - merged_keys:
+        pt_dict[k] = mp_dict[k].copy()
+
+    return pt_dict
+
+
+def merge_sim_patterns(obj):
+    mp_dict = obj.merge_pattern_dict
+    candidate_keys = get_candidate_keys(mp_dict.keys())
+
+    new_mp_dict = {}
+
+    for key, ptc in candidate_keys.items():
+        pairs = cal_corr(mp_dict, ptc)
+
+        if not pairs:
+            for k in ptc:
+                new_mp_dict[k] = mp_dict[k]
+            continue
+
+        pair_net = pd.DataFrame(pairs, columns=['s', 't'])
+        g = nx.from_pandas_edgelist(pair_net, 's', 't', create_using=nx.Graph())
+
+        sub_nets = [
+            list(c) for c in nx.connected_components(g)
+        ]
+
+        merged = select_patterns(ptc, mp_dict, sub_nets, key)
+        new_mp_dict.update(merged)
+
+    return new_mp_dict
+
+
+# Renaming pattern name
+def renaming_pattern_id(mp_dict):
+    unique_path = np.unique([i[:i.find('_')] for i in mp_dict.keys()])
+    for path in unique_path:
+        candidates = [k for k in mp_dict.keys() if k[:k.find('_')] == path]
+        for i, key in enumerate(candidates):
+            mp_dict[f'{path}_{i}'] = mp_dict.pop(key)
+    # Sorting pattenr id
+    mp_dict = dict(sorted(mp_dict.items(), key=lambda x:int(x[0][:x[0].find('_')])))
+    return mp_dict
+
+
+# Save pattern centroid
+def save_pattern_centroid(obj):
+    pt_csv_dict = {}
+    for key, df in obj.merge_pattern_dict.items():
+        mean_val = l2norm(df).mean().values
+        pt_csv_dict[key] = mean_val
+    
+    pt_csv_df = pd.DataFrame(pt_csv_dict).T
+    pt_csv_df.columns = ['T'+str(i+1) for i in range(len(pt_csv_df.columns))]
+    pt_csv_df.index.name = 'Key'
+
+    output_name = f'{obj.params.output_dir}/{obj.params.output_name}_pattern_centroid.csv'
+    pt_csv_df.to_csv(output_name)

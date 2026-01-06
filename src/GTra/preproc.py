@@ -6,7 +6,7 @@ import os
 
 from scipy.stats import mannwhitneyu
 from collections import Counter, defaultdict
-from cluster_func import *
+from .cluster_func import *
 
 
 def filter_genes(adata):

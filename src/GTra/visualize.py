@@ -16,7 +16,7 @@ import networkx as nx
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.cluster.hierarchy import linkage, fcluster
 
-from gutils import calc_gap
+from .gutils import calc_gap
 
 
 # Draw consensus matrix
@@ -92,7 +92,7 @@ def draw_ccmatrix(cc, gnames, title='GC', outdir='./'):
     os.makedirs(ccoutput, exist_ok=True)
     g.fig.savefig(f"{ccoutput}/{safe_title}_cm.png", bbox_inches="tight")
 
-from preproc import create_color_dict
+from .preproc import create_color_dict
 def draw_edge_stat(obj):
     if len(obj.rank_dict) == 0:
         print("Perform the edge statistics test first!")
@@ -553,8 +553,8 @@ def draw_gg_matrix(obj):
 
 
 def draw_patterns(obj):
-    from gutils import l2norm, vect_mu, convert_path_name, make_gene_set_frame
-    from gutils import plotting_patterns
+    from .gutils import l2norm, vect_mu, convert_path_name, make_gene_set_frame
+    from .gutils import plotting_patterns
 
     print("Plotting time-series gene expression patterns...")
 
@@ -613,8 +613,8 @@ def draw_patterns(obj):
 
 def draw_trajectories(obj):
     print("Plotting cell-state trajectories...")
-    from gutils import get_celltype_edges, get_gtra_res, generate_palette_dict
-    from gutils import get_plot_dat, get_trj_plot, get_cell_cnt_plot, layout_info
+    from .gutils import get_celltype_edges, get_gtra_res, generate_palette_dict
+    from .gutils import get_plot_dat, get_trj_plot, get_cell_cnt_plot, layout_info
     celltype_info, celltypes_sb, celltypes_bs = get_celltype_edges(obj)
 
     sdat, trtp_celltypes, sub_celltypes = get_gtra_res(obj, celltypes_sb)
