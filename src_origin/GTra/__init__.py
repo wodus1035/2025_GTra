@@ -1,2 +1,0 @@
-from .GTra import GTraObject
-

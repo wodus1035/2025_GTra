@@ -6,14 +6,17 @@ import igraph as ig
 import copy
 
 import random
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+
 
 import seaborn as sns
 import matplotlib.colors as mcolors
 
-from scipy.stats import zscore
 
-
-from sklearn.decomposition import TruncatedSVD, PCA
+from sklearn.decomposition import PCA
 from sklearn.neighbors import NearestNeighbors
 from scipy.cluster.hierarchy import linkage, fcluster
 
@@ -45,16 +48,20 @@ def _get_label(labels, names, K):
 
 ## --------------- Cell clustering --------------- ##
 # Cell type labeling
-def add_annotation(obj, time):
+def add_annotation(obj, time, do_filter=True):
     adata = obj.tp_data_dict[time]
     adata.layers["raw"] = adata.X.copy()
 
     cname = adata.obs.columns[0]
     obj.params.cell_type_label = cname
 
-    # 1) Filter out low-count cell types
+    # 1) Filter out low-count cell types (optional)
     counts = adata.obs[cname].value_counts()
-    valid_ct = counts[counts > obj.params.filter_cell_n].index
+    if do_filter:
+        valid_ct = counts[counts > obj.params.filter_cell_n].index
+    else:
+        valid_ct = counts.index  # keep all observed CTs
+
     adata = adata[adata.obs[cname].isin(valid_ct)].copy()
 
     # 2) Convert cell types into integer labels
@@ -64,12 +71,12 @@ def add_annotation(obj, time):
 
     adata.obs["cluster_label"] = clabel
     K = len(unique_ct)
-    
-    # 3) Build label index list for each cluster
+
     cells = adata.obs_names.tolist()
     label_index = _get_label(clabel, cells, K)
 
     return adata, label_index, K, clabel
+
 
 
 # Graph-based cell clustering using leiden
@@ -118,7 +125,7 @@ def create_color_dict(obj):
 # Cell clustering for each time point
 def cell_clustering(obj, time):
     if obj.params.label_flag:
-        adata, cli, K, clabel = add_annotation(obj, time)
+        adata, cli, K, clabel = add_annotation(obj, time, do_filter=True)
     else:
         adata, cli, K, clabel = cell_graph_clustering(obj, time)
     
@@ -129,202 +136,110 @@ def cell_clustering(obj, time):
 
 
 ## --------------- Gene clustering --------------- ##
-# kNN based gene clustering
-# def knn_based_gene_clustering(X, obs, target_cluster, gene_names=None):
-#     """
-#     Perform fast KNN-based gene clustering for a single cell cluster.
-#     Takes genes x cells expression, builds a cosine-KNN graph, 
-#     runs Leiden clustering, and returns gene groups.
-#     """
-#     cname = "cluster_label"
-
-#     # --- 1) Select cells of the target cluster --- #
-#     mask = obs[cname].values == target_cluster
-#     if mask.sum() <= 2:
-#         return []
-    
-#     X_sub = X[mask]  # shape = (#cells, #genes)
-#     # convert to dense if sparse
-#     if not isinstance(X_sub, np.ndarray):
-#         X_sub = X_sub.toarray()
-    
-#     # gene x cell
-#     G = X_sub.T
-
-#     # ---- 2) Normalize: CPM + log1p + zscore ---- #
-#     # # 2-1) CPM (safe version)
-#     # rsum = G.sum(axis=1, keepdims=True)               # (genes, 1)
-#     # zero_mask = (rsum == 0)                           # True for genes with zero total expression
-
-#     # rsum_safe = np.where(zero_mask, 1, rsum)          # avoid division by zero
-
-#     # G_cpm = (G / rsum_safe) * 1e6                     # CPM transform
-#     # G_cpm[zero_mask[:, 0]] = 0                        # rows that had zero expr remain zero
-    
-#     # log1p
-#     G_log = np.log1p(G)
-#     # z-score normalization across cells (axis=0)
-#     # G_norm = zscore(G_log, axis=1, nan_policy='omit')
-#     # Replace remaining NaN with 0
-#     G_norm = np.nan_to_num(G_log)
-#     # Now gene × cell convert
-#     G_final = G_norm  # shape = (#genes, #cells)
-
-#     # ---- 3) SVD embedding of genes ---- #
-#     n_cells = G_final.shape[1]
-#     n_components = min(20, n_cells - 1)
-#     svd = TruncatedSVD(n_components=n_components, random_state=0)
-#     G_svd = svd.fit_transform(G_final)
-
-#     # ---- 4) Build KNN graph ---- #
-#     nn_num = min(20, n_cells - 1)
-#     nn = NearestNeighbors(n_neighbors=nn_num, metric="cosine").fit(G_svd)
-#     knn_graph = nn.kneighbors_graph(G_svd, mode="connectivity")
-#     src, tar = knn_graph.nonzero()
-
-#     g = ig.Graph(n=G_final.shape[0], edges=list(zip(src, tar)), directed=False)
-
-#     # ---- 5) Leiden clustering ---- #
-#     res_list = [0.2, 0.4, 0.6, 0.8]
-
-#     best_mod = -999
-#     best_part = None
-
-#     for res in res_list:
-#         part = leidenalg.find_partition(
-#             g,
-#             leidenalg.RBConfigurationVertexPartition,
-#             resolution_parameter=res,
-#             seed=1234
-#         )
-#         if part.modularity > best_mod:
-#             best_mod = part.modularity
-#             best_part = part
-
-#     if best_part is None:
-#         return []
-
-#     labels = best_part.membership
-
-#     # Force split if only 1 cluster
-#     if len(set(labels)) == 1:
-#         part = leidenalg.find_partition(
-#             g,
-#             leidenalg.RBConfigurationVertexPartition,
-#             resolution_parameter=1.6,
-#             seed=1234
-#         )
-#         labels = part.membership
-
-#     # ---- 6) Convert into glabel_idx format ---- #
-#     K = max(labels) + 1
-#     glabel_idx = [[] for _ in range(K)]
-
-#     for gi, lbl in enumerate(labels):
-#         glabel_idx[lbl].append(gene_names[gi] if gene_names is not None else gi)
-#     return glabel_idx
 def knn_based_gene_clustering(
-    tp_data_df,
-    tp_data_obs,
-    clabel,
-    gnames,
-    max_pcs=30,
-    max_knn=20,
-    random_state=1234
+    X,
+    obs,
+    target_cluster,
+    gene_names=None,
+    cell_label_col="cluster_label",
+    min_cells=10,
+    n_pcs_max=30,
+    k_gene_max=15,
+    res_list=(0.2, 0.4, 0.6),
+    seed=1234,
+    force_split_single_cluster=False,
 ):
     """
-    v1.2: paper-safe & optimized gene clustering
+    PCA + cosine-kNN + Leiden gene clustering within a single cell cluster.
+    Returns: list of gene clusters (each cluster is a list of genes).
     """
 
-    cname = "cluster_label"
+    # 1) Select cells in the target cluster
+    mask = (obs[cell_label_col].values == target_cluster)
+    n_cells = int(mask.sum())
+    if n_cells < min_cells:
+        return []
 
-    # --------------------------------------------------
-    # Select cells
-    # --------------------------------------------------
-    cell_mask = (tp_data_obs[cname]==clabel).values
-    counts = tp_data_df.loc[cell_mask,:].T
+    X_sub = X[mask]  # (n_cells, n_genes)
+    if not isinstance(X_sub, np.ndarray):
+        X_sub = X_sub.toarray()
 
-    # Normalization
-    cpm = counts.div(counts.sum(axis=0), axis=1) * 1e6
-    log_expr = np.log1p(cpm)
-    X = pd.DataFrame(zscore(log_expr, axis=1),
-                     index=log_expr.index, columns=log_expr.columns)
-    X = X.dropna()
+    # genes x cells
+    G = X_sub.T
+    n_genes = G.shape[0]
 
-    # --------------------------------------------------
-    # PCA (numpy only)
-    # --------------------------------------------------
-    n_cells = X.shape[1]
-    npcs = min(max_pcs, n_cells - 1)
-    X_pca = PCA(n_components=npcs, random_state=random_state).fit_transform(X)
+    if gene_names is not None and len(gene_names) != n_genes:
+        raise ValueError(
+            f"gene_names length ({len(gene_names)}) != n_genes ({n_genes})."
+        )
 
-    # --------------------------------------------------
-    # kNN graph (cosine, weighted)
-    # --------------------------------------------------
-    nn_num = min(max_knn, n_cells - 1)
-    nn = NearestNeighbors(
-        n_neighbors=nn_num,
-        metric="cosine"
-    ).fit(X_pca)
+    # 2) log2(x+1) + gene-wise z-score
+    G_log = np.log2(G + 1.0)
+    mu = G_log.mean(axis=1, keepdims=True)
+    sd = G_log.std(axis=1, keepdims=True) + 1e-8
+    G_final = (G_log - mu) / sd
+    G_final = np.nan_to_num(G_final)
 
-    knn_dist = nn.kneighbors_graph(
-        X_pca, mode="distance"
-    )
-    src, tar = knn_dist.nonzero()
-    weights = 1.0 - knn_dist.data  # cosine similarity
+    # 3) PCA embedding (genes as observations)
+    n_components = min(n_pcs_max, n_cells - 1, n_genes - 1)
+    if n_components < 2:
+        return []
 
-    g = ig.Graph(
-        edges=list(zip(src, tar)),
-        edge_attrs={"weight": weights},
-        directed=False
-    )
+    pca = PCA(n_components=n_components, random_state=0)
+    G_pca = pca.fit_transform(G_final)  # (n_genes, n_components)
 
-    # --------------------------------------------------
-    # Resolution sweep (restricted, stable)
-    # --------------------------------------------------
-    res_range = np.arange(0.2, 1.3, 0.1)
-    modularities, partitions = [], []
+    # 4) gene-gene kNN graph (k based on n_genes!)
+    k = min(k_gene_max, n_genes - 1)
+    if k < 2:
+        return []
 
-    for res in res_range:
+    nn = NearestNeighbors(n_neighbors=k, metric="cosine")
+    nn.fit(G_pca)
+    knn_graph = nn.kneighbors_graph(G_pca, mode="connectivity")
+
+    # symmetrize for undirected Leiden
+    knn_graph = knn_graph.maximum(knn_graph.T)
+    src, tar = knn_graph.nonzero()
+    if len(src) == 0:
+        return []
+
+    g = ig.Graph(n=n_genes, edges=list(zip(src.tolist(), tar.tolist())), directed=False)
+
+    # 5) Leiden: choose best modularity across resolutions
+    best_part, best_mod = None, -np.inf
+    for res in res_list:
         part = leidenalg.find_partition(
             g,
             leidenalg.RBConfigurationVertexPartition,
-            weights="weight",
-            seed=random_state,
-            resolution_parameter=res
+            resolution_parameter=float(res),
+            seed=seed,
         )
-        modularities.append(part.modularity)
-        partitions.append(part)
+        if part.modularity > best_mod:
+            best_mod, best_part = part.modularity, part
 
-    # Knee-point detection
-    kneedle = KneeLocator(
-        res_range,
-        modularities,
-        curve="concave",
-        direction="increasing"
-    )
+    if best_part is None:
+        return []
 
-    if kneedle.knee is not None:
-        best_idx = np.where(res_range == kneedle.knee)[0][0]
-    else:
-        best_idx = int(np.argmax(modularities))
-
-    best_part = partitions[best_idx]
     labels = best_part.membership
 
-    # --------------------------------------------------
-    # Fallback: enforce >= 2 clusters
-    # --------------------------------------------------
-    if len(set(labels)) < 2:
-        for part in reversed(partitions):
-            if len(set(part.membership)) >= 2:
-                labels = part.membership
-                break
+    # Optional fallback (not recommended for bootstrap stability)
+    if force_split_single_cluster and len(set(labels)) == 1:
+        part = leidenalg.find_partition(
+            g,
+            leidenalg.RBConfigurationVertexPartition,
+            resolution_parameter=float(max(res_list)) * 2.0,
+            seed=seed,
+        )
+        labels = part.membership
 
-    # --------------------------------------------------
-    # Output
-    # --------------------------------------------------
-    glabel_idx = get_label(labels, gnames, max(labels) + 1)
+    # 6) Convert to list-of-gene-lists
+    K = max(labels) + 1
+    glabel_idx = [[] for _ in range(K)]
+    for gi, lbl in enumerate(labels):
+        glabel_idx[lbl].append(gene_names[gi] if gene_names is not None else gi)
+
+    # remove empties
+    glabel_idx = [grp for grp in glabel_idx if len(grp) > 0]
     return glabel_idx
 
 
@@ -350,15 +265,38 @@ def _build_boot_obj(dat):
     obj.params = dat["params"]
     return obj
 
-# Select randomized cell type-specific cells
-def _create_random_cells(obj, time):
+def _create_random_cells(obj, time, frac=0.8, min_keep=10):
+    """
+    Randomly subsample cells within each (annotated) cell type, but
+    guarantee a minimum number of retained cells per type to prevent
+    disappearing cell types in bootstrap runs.
+
+    min_keep:
+      - If None, uses obj.params.filter_cell_n + 1 (safe for add_annotation filtering)
+    """
     trial_cells = []
     dat = obj.tp_data_dict[time]
-    dat_group = dat.obs.groupby(obj.params.cell_type_label)
-    for _, mat in dat_group:
-        n_cells = list(mat.index)
-        N = int(len(n_cells)*.8)
-        trial_cells.extend(random.sample(n_cells, N))
+    ct_col = obj.params.cell_type_label
+
+    if min_keep is None:
+        # ensure each CT survives add_annotation() filtering (> filter_cell_n)
+        min_keep = int(obj.params.filter_cell_n) + 1
+
+    for _, mat in dat.obs.groupby(ct_col):
+        cell_ids = list(mat.index)
+        n = len(cell_ids)
+        if n == 0:
+            continue
+
+        N = int(n * frac)
+
+        # guarantee at least min_keep, but never exceed n
+        N = max(N, min_keep)
+        N = min(N, n)
+
+        # if N == n, sample() still works but is wasteful; keep it simple
+        trial_cells.extend(random.sample(cell_ids, N))
+
     return trial_cells
 
 
@@ -400,7 +338,7 @@ def process_timepoint(dat, tp):
     cli = mini.cell_label_index[tp]
 
     # 3) Prepare numeric matrix
-    X = mini.tp_data_dict[tp].to_df()
+    X = mini.tp_data_dict[tp].X
     obs = mini.tp_data_dict[tp].obs
     gene_names = mini.tp_data_dict[tp].var_names.tolist()
 
@@ -408,6 +346,9 @@ def process_timepoint(dat, tp):
     glabels = []
     for cid in range(K):
         gcl = knn_based_gene_clustering(X, obs, cid, gene_names)
+        if len(gcl) == 0:
+            # fallback: 최소 1개 module 보장 (전체 genes 또는 HVG subset 등)
+            gcl = [gene_names]   # 또는 [list(intersection genes)] 등
         glabels.append(gcl)
     
     return dict(
@@ -498,11 +439,15 @@ def statistical_testing(obj, N=50, n_cores=8):
     dat =_extract_dat(obj)
     
     # 1) Run N bootstrap iterations
-    res = Parallel(n_jobs=n_cores, backend='loky')(
-        delayed(Run_step1_and_2)(dat)
-        for _ in range(N)
-        )
+    # res = Parallel(n_jobs=n_cores, backend='threading')(
+    #     delayed(Run_step1_and_2)(dat)
+    #     for _ in range(N)
+    #     )
     
+    res = Parallel(n_jobs=n_cores, backend="loky")(  # <= threading -> loky
+        delayed(Run_step1_and_2)(dat) for _ in range(N)
+    )
+
     # 2) Build CCM (correspondence matrix)
     obj.ccmatrix = get_ccmatrix(res)
     
@@ -584,6 +529,4 @@ def cc_clustering(obj):
             clabel_clusters.append(clustered_genes)
         
         obj.gene_label_info[time] = clabel_clusters
-                
-    
     

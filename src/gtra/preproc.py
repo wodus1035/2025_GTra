@@ -105,22 +105,36 @@ def get_gcinfo(obj):
 
 # Create consensus matrix for gene clustering results
 def get_ccmatrix(res):
+    from collections import defaultdict
     ccmatrix = defaultdict(dict)
     N = len(res)
-    
+
     for time in res[0][1].keys():
-        cts = len(res[0][1][time])
-        for ct in range(cts):
-            labels = res[0][1][time][ct]
-            n_genes = len(labels)
-            mat = np.zeros((n_genes, n_genes))
-            
+        cts0 = len(res[0][1][time])
+        for ct in range(cts0):
+            labels0 = res[0][1][time][ct]
+            n_genes = len(labels0)
+            mat = np.zeros((n_genes, n_genes), dtype=float)
+
+            denom = 0
             for run in res:
+                if time not in run[1]:
+                    continue
+                if ct >= len(run[1][time]):      # <-- guard
+                    continue
                 labels = np.array(run[1][time][ct])
-                same_clusters = (labels[:,None] == labels[None,:]).astype(int)
-                mat += same_clusters
-            
-            mat /= N
+                if len(labels) != n_genes:
+                    continue
+
+                same = (labels[:, None] == labels[None, :]).astype(int)
+                mat += same
+                denom += 1
+
+            if denom == 0:
+                mat[:] = 0
+            else:
+                mat /= denom
+
             ccmatrix[time][ct] = mat
     return ccmatrix
 
@@ -172,7 +186,7 @@ def cal_pvals(dist_df):
                 rest_vals = cdf[cdf['target']!=tar]['score'].values
                 
                 if len(tar_vals) > 0 and len(rest_vals) >0:
-                    _, pval = mannwhitneyu(tar_vals, rest_vals, alternative='greater')
+                    _, pval = mannwhitneyu(tar_vals, rest_vals, alternative='less')
                 else:
                     # print(f'[Skip] Empty group')
                     pval = np.nan

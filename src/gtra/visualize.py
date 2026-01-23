@@ -2,13 +2,14 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import matplotlib.path as mpath
 import matplotlib.colors as mcolors
+import plotly.graph_objects as go
 
 import networkx as nx
-
 
 import itertools
 
@@ -234,7 +235,7 @@ def draw_transition_graph(obj, p_th=0.05):
     }
 
     # === filter significant edges ===
-    df = obj.pval_df.loc[obj.pval_df["p-value"] < p_th].copy()
+    df = obj.pval_df.loc[obj.pval_df["adj_p-value"] < p_th].copy()
     if df.empty:
         print("No significant transitions found.")
         return
@@ -248,7 +249,7 @@ def draw_transition_graph(obj, p_th=0.05):
         )
             
         df = df[
-            df.apply(lambda r: (r["source"], r["target"]) in answer_edges, aixs=1)
+            df.apply(lambda r: (r["source"], r["target"]) in answer_edges, axis=1)
         ].copy()
 
     intervals = sorted(df["Interval"].unique())
@@ -378,7 +379,7 @@ def draw_gg_matrix(obj):
         # === DataFrame 생성 ===
         df = pd.DataFrame(
             edge_list,
-            columns=["source", "target", "jaccard", "cosine", "kl", "rank"]
+            columns=["source", "target", "jaccard", "cosine", "rank"]
         )
 
         # === Parsing ===
@@ -402,7 +403,7 @@ def draw_gg_matrix(obj):
 
         # === Heatmap ===
         n_row, n_col = pivot_df.shape
-        cell_size, base = 0.33, 1.2
+        cell_size, base = 0.33, .8
         fig_w, fig_h = base + n_col * cell_size, base + n_row * cell_size
 
         fig, ax = plt.subplots(
@@ -411,18 +412,12 @@ def draw_gg_matrix(obj):
             )
         
         vals = pivot_df.values
-        # nonzero = vals[vals >= 0]
-
-        # vmin = vals.min()
-        # vmax = vals.max()   # 또는 percentile로 살짝 자르기
+    
         
         sns.heatmap(
             pivot_df,
             cmap = "viridis",
-            # norm = PowerNorm(gamma=0.35),
             ax=ax,
-            # vmin=vmin,
-            # vmax=vmax,
             cbar_kws={
                 'label': 'Transition strength',
                 'shrink': 0.65
@@ -495,7 +490,308 @@ def draw_gg_matrix(obj):
 ##################################################################################
 
 # Draw time-series gene expression patterns
+def draw_patterns(obj):
+    from .utils import l2norm, vect_mu, convert_path_name, make_gene_set_frame
+    from .utils import plotting_patterns
 
-def draw_patterns():
-    x = 0
+    print("Plotting time-series gene expression patterns...")
+
+    output_name = f"{obj.params.output_dir}/{obj.params.output_name}_patterns.pdf"
+    pdf = matplotlib.backends.backend_pdf.PdfPages(output_name)
+
+    # Figure positions
+    row_n, col_n, pos = 3, 3, 0
+    fig, ax = plt.subplots(figsize=(14,10), nrows=row_n, ncols=col_n)
+
+    # Trajectory keys
+    pt_keys = list(obj.merge_pattern_dict.keys())
+    time_len = obj.tp_data_num
+
+    # Gene set data frame
+    gene_set_df = pd.DataFrame()
+
+    # Plotting time-series gene expression patterns
+    fc_th = 1.5
+    for idx, key in enumerate(pt_keys):
+        # Normalization
+        pt_df = l2norm(obj.merge_pattern_dict[key])
+        cent = vect_mu(pt_df)
+
+        if len(pt_df.columns) != time_len: continue
+        if max(cent) / min(cent) < fc_th: continue
+
+        # Customizing a personalized list of specific time points for each user
+        if len(obj.params.time_point_label) != 0:
+            pt_df.columns = obj.params.time_point_label
+        
+        # Store cell-state trajectory info and gene sets
+        convert_name = convert_path_name(obj, key)
+        start_cells = convert_name[: convert_name.find("-")]
+        gene_set_df = make_gene_set_frame(idx, gene_set_df, pt_df, key, convert_name)
+
+        # Update position
+        if pos // col_n == col_n:
+            fig.tight_layout()
+            pdf.savefig(fig)
+            plt.show()
+            fig.clf()
+            fig, ax = plt.subplots(figsize=(14,10), nrows=row_n, ncols=col_n)
+            pos = 0
+        
+        # Plotting gene expression patterns
+        plotting_patterns(pt_df, key, start_cells, ax, pos)
+        pos+=1
     
+    # Store gene set information for cell trajectory
+    gene_set_df.to_csv(f'{obj.params.output_dir}/{obj.params.output_name}_pattern_genes.csv',sep=",")
+    fig.tight_layout()
+    pdf.savefig(fig)
+    plt.show()
+    pdf.close()
+    
+    
+from .utils import build_sankey_df_from_pvals, rgb01_to_rgbstr, extract_time_and_celltype
+from .utils import rgb01_to_rgbstr
+
+def draw_trajectory(obj):
+    color_mapping = obj.celltype_colors.copy()
+    
+    df = build_sankey_df_from_pvals(obj, min_gn=5, pval_th=1e-5)
+    df["Interval"] = df["Interval"].astype(int)
+
+    interval_to_time = {i: f"T{i}" for i in sorted(df["Interval"].unique())}
+    next_time = {f"T{i}": f"T{i+1}" for i in sorted(df["Interval"].unique())}
+
+    df["source_label"] = df.apply(lambda row: 
+        f"{interval_to_time[row['Interval']]}: {row['source']}", axis=1)
+    df["target_label"] = df.apply(lambda row: 
+        f"{next_time[interval_to_time[row['Interval']]]}: {row['target']}", axis=1)
+
+    labels = sorted(set(df["source_label"]).union(set(df["target_label"])),
+                    key=lambda x: extract_time_and_celltype(x))
+    label_to_index = {label: idx for idx, label in enumerate(labels)}
+    node_colors = [color_mapping[label.split(": ")[1]] for label in labels]
+
+    time_labels = sorted(set(l.split(":")[0] for l in labels))
+    celltype_order = sorted(color_mapping.keys())
+
+    cell_type_per_time = {
+        t: [ct for ct in celltype_order if ct in  set(l.split(": ")[1] for l in labels if l.startswith(t))]
+        for t in time_labels
+        }
+
+    node_colors = [rgb01_to_rgbstr(c) for c in node_colors]
+
+    spacing_factor = 1.1
+
+    node_x, node_y = [], []
+
+    for label in labels:
+        t, ct = label.split(': ')
+        ct_list = cell_type_per_time[t]
+        x = time_labels.index(t) / (len(time_labels) - 1) if len(time_labels) > 1 else 0.5
+        y_rank = ct_list.index(ct)
+        y = (y_rank / max(1, len(ct_list) - 1)) * spacing_factor
+        node_x.append(x)
+        node_y.append(1 - y)
+
+    df["source_index"] = df["source_label"].map(label_to_index)
+    df["target_index"] = df["target_label"].map(label_to_index)
+    link_colors = [node_colors[idx] for idx in df["source_index"]]
+
+    visible_labels = []
+    for label in labels:
+        t, _ = label.split(': ')
+        visible_labels.append(label.split(': ')[1])
+
+
+
+    fig = go.Figure(data=[go.Sankey(
+        arrangement = "fixed",
+        node= dict(
+            pad=15,
+            thickness=10,
+            line=dict(color="black", width=0.8),
+            label=visible_labels,
+            color=node_colors,
+            x=node_x,
+            y=node_y
+            ),
+        link = dict(
+            source=df["source_index"],
+            target=df["target_index"],
+            value=df["GN"],
+            color=link_colors
+            )
+    )])
+
+    fig.update_layout(title_text="", 
+                    font_size=10,
+                    height=400,
+                    margin=dict(l=80, r=80, t=80, b=80))
+
+    time_anno = obj.params.time_point_label
+    for i, t in enumerate(time_anno):
+        x = i / (len(time_anno) - 1) if len(time_anno) > 1 else 0.5
+        fig.add_annotation(
+            x=x, y=-0.32,  # y는 다이어그램 하단에 위치하도록 음수로 조정
+            text=t,
+            showarrow=False,
+            xref="paper", yref="paper",
+            font=dict(size=14),
+            align="center"
+        )
+
+    outputdir = f"{obj.params.output_dir}/{obj.params.output_name}_trajectory_sankey.pdf"
+    fig.write_image(outputdir)
+    fig.show()    
+
+
+def draw_module_cluster(obj):
+    n_colors = obj.cell_type_info.iloc[:,0].nunique()
+    cb_palette = sns.color_palette("Set2", n_colors)
+    
+    res_df = obj.sig_patterns
+    pt_dist = obj.pattern_dist
+    pt_df = obj.module_df
+    clusters = pt_df['cluster'].values
+    
+
+    c_lut = {i:cb_palette[i] for i in range(max(clusters) + 1)}
+    trend = pd.Series(clusters, index=res_df.index)
+
+    col_colors = trend.map(c_lut)
+
+    g = sns.clustermap(
+        pt_dist, 
+        col_colors=col_colors.to_numpy(),
+        xticklabels=False,
+        yticklabels=False,
+        cmap='vlag', 
+        method="ward",
+        figsize=(6, 6)
+        )
+
+    g.ax_heatmap.set_xlabel("Modules",fontsize=15)    # x축 제목
+    g.ax_heatmap.set_ylabel("Modules",fontsize=15)    # y축 제목
+    g.cax.set_ylabel("Correlation", rotation=270, labelpad=10, fontsize=11)
+
+    cluster_legend = [mpatches.Patch(color=c_lut[i], label=f'C{i}')
+                    for i in sorted(np.unique(pt_df["cluster"].values))]
+
+    g.ax_col_dendrogram.legend(
+                handles=cluster_legend,
+                title="Module \nclusters",
+                loc='upper left',
+                bbox_to_anchor=(1, 1.0),
+                fontsize=9,
+                title_fontsize=10,
+                frameon=False
+                )
+
+    col_colors_raw = g.col_colors
+
+    color_row = np.array(col_colors_raw)
+    col_order = g.dendrogram_col.reordered_ind
+    ordered_colors = color_row[col_order]
+
+    boundaries = []
+    for color, group in itertools.groupby(enumerate(ordered_colors), 
+                                          key=lambda x: tuple(x[1])):
+        group = list(group)
+        start = group[0][0]
+        end = group[-1][0]
+        boundaries.append((start, end, color))
+
+    ax = g.ax_heatmap
+    edge_color='white'
+    face_alpha=0.07
+    for start, end, color in boundaries:
+        size = end - start + 1
+        rect = mpatches.Rectangle(
+            (start, start), size, size,
+            linewidth=3.5,
+            edgecolor=edge_color,
+            facecolor=color + (face_alpha,),
+            linestyle='-',
+            joinstyle='round'
+        )    
+        ax.add_patch(rect)
+
+
+from .utils import l2norm
+
+def draw_rep_patterns(obj):
+    plt.rcParams.update({
+        'font.size': 14,
+        'axes.titlesize': 14,
+        'axes.labelsize': 12,
+        'legend.fontsize': 10,
+        'xtick.labelsize': 16,
+        'ytick.labelsize': 10,
+        'font.family': 'sans-serif',
+        'axes.edgecolor': 'black',
+        'axes.linewidth': 0.8
+    })
+
+    sns.set(style="white", context="paper")
+
+    n_colors = obj.cell_type_info.iloc[:,0].nunique()
+    cb_palette = sns.color_palette("Set2", n_colors)
+
+    pt_df = obj.module_df.copy()
+    n_clusters = pt_df["cluster"].nunique()
+    fig, axes = plt.subplots(n_clusters, 1, figsize=(4, 2.5 * n_clusters), sharex=True)
+
+    if n_clusters == 1:
+        axes = [axes]
+
+    pt_id_c = dict()
+
+    for ax, (c, d) in zip(axes, pt_df.groupby("cluster")):
+        tmp = []
+        expr_list = []
+        union_genes = set()
+
+        for pi in d["Pattern_ID"]:
+            tmp.append(pi)
+            expr = l2norm(obj.merge_pattern_dict[pi])
+            avg_expr = expr.mean(axis=0)
+            expr_list.append(avg_expr)
+
+            union_genes.update(list(expr.index))
+
+        pt_id_c[c] = tmp
+
+        expr_df = pd.concat(expr_list, axis=1)
+        mean_expr = expr_df.mean(axis=1)
+        std_expr = expr_df.std(axis=1)
+
+        ax.plot(obj.params.time_point_label, mean_expr.values,
+                label=None,
+                marker='o',
+                color=cb_palette[c-1],
+                linewidth=2)
+
+        ax.fill_between(obj.params.time_point_label,
+                        mean_expr.values - std_expr.values,
+                        mean_expr.values + std_expr.values,
+                        color=cb_palette[c-1],
+                        alpha=0.2, linewidth=0)
+
+        ax.set_title(f"C{c} (n={len(union_genes)})", fontsize=13, fontweight='bold')
+
+        ax.set_ylabel("Expression", fontsize=11)
+        ax.grid(False)
+        ax.tick_params(axis='x', labelsize=12)
+
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+
+    axes[-1].set_xlabel("Time points", fontsize=11)
+
+    plt.tight_layout()
+
+    output_dir = f"{obj.params.output_dir}/{obj.params.output_name}_MC_patterns.pdf"
+    plt.savefig(output_dir)
+    plt.show()

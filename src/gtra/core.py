@@ -105,6 +105,12 @@ class GTraObject(object):
             list(map(self.f, [])), columns = ["from", "to"]
         )
         self.merge_net_info = [[[]]]
+        
+        ## Pattern evaluation
+        self.sig_patterns = pd.DataFrame()
+        self.pattern_dist = pd.DataFrame()
+        self.module_df = pd.DataFrame()
+        
     
     # Upload time-series scRNA-seq dataset
     def upload_time_scRNA(self, *args):
@@ -183,9 +189,9 @@ class GTraObject(object):
         # Comparison intersected gene set between adjacent time points
         edge_info = []
         for t1_s in range(len(t1_genes)):
-            cos_dists = []
-            dists = {}
-            einfo = {}
+            # cos_dists = []
+            # dists = {}
+            # einfo = {}
             for t1_g in range(len(t1_genes[t1_s])):
                 for t2_s in range(len(t2_genes)):
                     for t2_g in range(len(t2_genes[t2_s])):
@@ -197,42 +203,11 @@ class GTraObject(object):
                         dist = cal_cos_dist(
                             self, tp1, tp2, t1_s, t2_s, t1_df, t2_df, inter_genes
                         )
-                        if dist == -1: continue
-                        # Within distance of edge
-                        cent = np.mean(dist)
+                        if dist is None or dist == -1: 
+                            continue
 
-                        if dists.get(t2_s) is None:
-                            dists[t2_s] = []
-                            einfo[t2_s] = []
-
-                        dists[t2_s].append(dist)
-                        einfo[t2_s].append([t1_s, t1_g, t2_s, t2_g, sim, cent])
-                        cos_dists.append(dist)
-
-            # Population
-            pop_cos = np.array(sum(cos_dists, []))
-
-            # Statistical test (non-parametric test) + FDR correciton
-            num_edges = 0
-            p_dict  ={}
-            for k in dists:
-                p_dict[k] = {}
-                for i,dat in enumerate(dists[k]):
-                    _, pval = wilcoxon(np.array(dat)-np.mean(pop_cos), zero_method='zsplit')
-                    num_edges+=1
-                    p_dict[k][i]=pval
-
-            # Calculate adjusted p-value
-            for k in p_dict:
-                for i,p in p_dict[k].items():
-                    z = np.mean(pop_cos)-np.mean(dists[k][i])
-                    # Bonfferoni correction (adj P-val)
-                    adj_p = min(p*num_edges, 1.0)
-                    
-                    if (z<0)|(adj_p>0.05): continue
-
-                    einfo[k][i].extend([adj_p])
-                    edge_info.append(einfo[k][i])
+                        cent = float(dist)
+                        edge_info.append([t1_s, t1_g, t2_s, t2_g, sim, cent])
 
         self.edge_info[tp1] = edge_info
     
@@ -387,6 +362,10 @@ class GTraObject(object):
         save_pattern_centroid(self) # Save pattern centroid    
     
     
+    # Module evaluation
+    def module_evaluation(self):
+        pattern_eval(self)
+    
     # -------------------------- Visualization functions -------------------------- #
     
     # Plotting edge static results
@@ -403,3 +382,20 @@ class GTraObject(object):
     def plot_gg_matrix(self):
         from .visualize import draw_gg_matrix
         draw_gg_matrix(self)
+        
+    # Plotting time-series gene expression patterns
+    def plot_patterns(self):
+        from .visualize import draw_patterns
+        draw_patterns(self)
+    
+    def plot_trajectory(self):
+        from .visualize import draw_trajectory
+        draw_trajectory(self)
+    
+    def plot_module_cluster(self):
+        from .visualize import draw_module_cluster
+        draw_module_cluster(self)
+    
+    def plot_rep_patterns(self):
+        from .visualize import draw_rep_patterns
+        draw_rep_patterns(self)
