@@ -30,7 +30,9 @@ dependencies = [
   "statsmodels",
   "leidenalg",
   "igraph",
-  "soyclustering"
+  "soyclustering",
+  "kaleido",
+  "gseapy"
 ]
 
 [tool.setuptools.packages.find]

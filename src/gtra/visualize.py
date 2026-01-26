@@ -305,6 +305,9 @@ def draw_transition_graph(obj, p_th=0.05):
         ax.set_title(interval_conv.get(interval, str(interval)),
                      fontsize=15, weight="bold")
         ax.axis("off")
+        
+    output_dir = f"{obj.params.output_dir}/{obj.params.output_name}_tansition.pdf"
+    plt.savefig(output_dir)
 
     plt.show()
 
@@ -509,7 +512,7 @@ def draw_patterns(obj):
     gene_set_df = pd.DataFrame()
 
     # Plotting time-series gene expression patterns
-    fc_th = 1.5
+    fc_th = 1.2
     for idx, key in enumerate(pt_keys):
         # Normalization
         pt_df = l2norm(obj.merge_pattern_dict[key])

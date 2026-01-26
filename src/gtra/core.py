@@ -343,7 +343,7 @@ class GTraObject(object):
                     ).fit(csr_matrix(expr))
                 
                 except:
-                    self.merge_path_dict[key] = expr
+                    self.merge_pattern_dict[key] = expr
                     self.cluster_centers[key] = expr.mean().values
                     continue
 

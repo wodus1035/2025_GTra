@@ -1,0 +1,12 @@
+source,target
+HSCs,HSCs
+HSCs,LMPPs
+LMPPs,LMPPs
+LMPPs,MYP
+MYP,MYP
+MYP,eosiP
+MYP,MKP
+MYP,EryP
+EryP,EryP
+MKP,MKP
+eosiP,eosiP

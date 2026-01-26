@@ -723,6 +723,7 @@ def save_pattern_centroid(obj):
     pt_csv_df.index.name = 'Key'
 
     output_name = f'{obj.params.output_dir}/{obj.params.output_name}_pattern_centroid.csv'
+    os.makedirs(f'{obj.params.output_dir}', exist_ok=True)
     pt_csv_df.to_csv(output_name)
 
 

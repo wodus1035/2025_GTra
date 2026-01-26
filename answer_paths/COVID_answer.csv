@@ -1,0 +1,12 @@
+source,target
+B cells,B cells
+CD4+T,CD4+T
+CD8+T,CD8+T
+CD8+T,NK
+NK,NK
+CD14+Mono,CD14+Mono
+CD14+Mono,CD16+Mono
+CD14+Mono,cDCs
+CD16+Mono,CD16+Mono
+CD16+Mono,cDCs
+cDCs,cDCs
