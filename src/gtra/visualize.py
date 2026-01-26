@@ -17,9 +17,7 @@ import re
 import os
 
 from scipy.cluster.hierarchy import linkage, fcluster
-from matplotlib.lines import Line2D
 from matplotlib.legend_handler import HandlerPatch
-from matplotlib.colors import PowerNorm
 
 
 

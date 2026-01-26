@@ -1,0 +1,17 @@
+numpy
+pandas
+scipy
+scanpy
+anndata
+scikit-learn
+networkx
+matplotlib
+seaborn
+plotly
+tqdm
+joblib
+kneed
+statsmodels
+leidenalg
+igraph
+soyclustering

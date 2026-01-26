@@ -10,17 +10,27 @@ readme = "README.md"
 requires-python = ">=3.8"
 
 authors = [
-    { name = "Jaeyeon Jang" }
+  { name = "Jaeyeon Jang" }
 ]
 
 dependencies = [
-    "numpy",
-    "scipy",
-    "scanpy",
-    "scikit-learn",
-    "networkx",
-    "matplotlib",
-    "soyclustering"
+  "numpy",
+  "pandas",
+  "scipy",
+  "scanpy",
+  "anndata",
+  "scikit-learn",
+  "networkx",
+  "matplotlib",
+  "seaborn",
+  "plotly",
+  "tqdm",
+  "joblib",
+  "kneed",
+  "statsmodels",
+  "leidenalg",
+  "igraph",
+  "soyclustering"
 ]
 
 [tool.setuptools.packages.find]
