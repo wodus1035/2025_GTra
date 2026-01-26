@@ -38,6 +38,44 @@ Instead of ordering individual cells along a pseudotime axis, GTra explicitly mo
   Directed transition networks are assembled into full trajectories, and genes along each trajectory are summarized into representative temporal expression modules.
 
 ---
+## Installation (Conda recommended)
+
+This project depends on scientific Python packages (e.g., `scanpy`, `anndata`, `igraph/leidenalg`).  
+Using a **conda environment** is recommended to avoid dependency conflicts.
+
+### 1) Create and activate a conda environment
+```bash
+conda create -n gtra python=3.10 -y
+conda activate gtra
+python -m pip install --upgrade pip
+```
+
+### 2) Install from Github
+```bash
+pip install "git+https://github.com/wodus1035/2025_GTra.git"
+```
+
+### Developer installation (editable)
+If you want to modify the source code and have changes reflected immediately:
+```bash
+git clone https://github.com/wodus1035/2025_GTra.git
+cd 2025_GTra
+pip install -e .
+```
+
+### Troubleshooting (igraph/leidenalg)
+If installation fails due to igrpah/leidenalg, install them via conda first:
+```bash
+conda install -c conda-forge python-igraph leidenalg -y
+```
+Then retry the installation:
+```bash
+pip install "git+https://github.com/wodus1035/2025_GTra.git"
+
+```
+
+
+---
 
 ## Quick start
 
