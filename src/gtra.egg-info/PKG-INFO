@@ -3,6 +3,11 @@ Name: gtra
 Version: 0.1.0
 Summary: Gene expression pattern-based Trajectory analysis
 Author: Jaeyeon Jang
+Author-email: wodus1035@knu.ac.kr
+License: MIT
+Project-URL: Homepage, https://github.com/wodus1035/2025_GTra
+Project-URL: Repository, https://github.com/wodus1035/2025_GTra
+Keywords: single-cell,scRNA-seq,trajectory,gene module
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
 Requires-Dist: numpy
@@ -22,8 +27,10 @@ Requires-Dist: statsmodels
 Requires-Dist: leidenalg
 Requires-Dist: igraph
 Requires-Dist: soyclustering
+Requires-Dist: kaleido
+Requires-Dist: gseapy==1.0.6
 
-# Real-time trajectory inference from temporal single-cell expression via gene-module continuity and constrained transitions
+# GTra: modeling biological trajectories via constrained gene-module transitions in longitudinal single-cell RNA-seq
 
 GTra is a time-resolved trajectory inference framework for time-series single-cell RNA-seq data.  
 It reconstructs **cell-state trajectories and dynamic gene programs** by modeling the continuity of co-expressed gene modules across physical time, without relying on pseudotime or predefined lineage structures.
@@ -61,6 +68,44 @@ Instead of ordering individual cells along a pseudotime axis, GTra explicitly mo
 
 - **Trajectory reconstruction and gene module detection**  
   Directed transition networks are assembled into full trajectories, and genes along each trajectory are summarized into representative temporal expression modules.
+
+---
+## Installation (Conda recommended)
+
+This project depends on scientific Python packages (e.g., `scanpy`, `anndata`, `igraph/leidenalg`).  
+Using a **conda environment** is recommended to avoid dependency conflicts.
+
+### 1) Create and activate a conda environment
+```bash
+conda create -n gtra python=3.10 -y
+conda activate gtra
+python -m pip install --upgrade pip
+```
+
+### 2) Install from Github
+```bash
+pip install "git+https://github.com/wodus1035/2025_GTra.git"
+```
+
+### Developer installation (editable)
+If you want to modify the source code and have changes reflected immediately:
+```bash
+git clone https://github.com/wodus1035/2025_GTra.git
+cd 2025_GTra
+pip install -e .
+```
+
+### Troubleshooting (igraph/leidenalg)
+If installation fails due to igrpah/leidenalg, install them via conda first:
+```bash
+conda install -c conda-forge python-igraph leidenalg -y
+```
+Then retry the installation:
+```bash
+pip install "git+https://github.com/wodus1035/2025_GTra.git"
+
+```
+
 
 ---
 

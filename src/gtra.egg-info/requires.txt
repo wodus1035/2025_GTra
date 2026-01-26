@@ -15,3 +15,5 @@ statsmodels
 leidenalg
 igraph
 soyclustering
+kaleido
+gseapy==1.0.6

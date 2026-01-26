@@ -63,6 +63,7 @@ benchmark/scEGOT/HSPC_evaluation.ipynb
 benchmark/scEGOT/MND_analysis.ipynb
 benchmark/scEGOT/tutorial.ipynb
 imgs/GTra_overview.png
+src/GTra/__init__.py
 src/gtra/__init__.py
 src/gtra/cluster_func.py
 src/gtra/core.py

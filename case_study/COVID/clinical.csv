@@ -1,0 +1,9 @@
+,pname,pid,sex,age,pheno,MaxSev,dates,N,year
+0,P1,COV-CCO-296,W,49,DP,Critical,Day1|Day7|Day13,3,2nd
+1,P2,COV-MCO-002,M,79,DP,Critical,Day1|Day7|Day14,3,1st
+2,P3,COV-CCO-305,M,30,DP,Critical,Day3|Day6|Day13,3,2nd
+3,P4,COV-CCO-239,M,70,DP,Critical,Day1|Day6|Day8|Day12,4,2nd
+4,P5,COV-CCO-216,M,72,RP,Severe,Day3|Day6|Day10,3,1st
+5,P6,COV-CCO-366,M,57,RP,Severe,Day3|Day7|Day16|Day22,4,2nd
+6,P7,COV-CCO-301,M,52,RP,Severe,Day1|Day5|Day11,3,2nd
+7,P8,COV-CCO-368,W,74,RP,Critical,Day1|Day11|Day18,3,2nd
